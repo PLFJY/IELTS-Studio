@@ -26,7 +26,7 @@
         <div v-if="collections.length > 0" class="collections-section">
           <h2 class="section-title">📁 试卷集</h2>
           <div class="collection-grid">
-            <div v-for="col in collections" :key="col.id" class="collection-card card">
+            <div v-for="col in pagedCollections" :key="col.id" class="collection-card card">
               <div class="collection-card-header">
                 <div class="collection-icon">📂</div>
                 <button class="btn-icon-delete" title="删除试卷集" @click.stop="confirmDeleteCollection(col.id)">
@@ -47,6 +47,16 @@
                 </button>
               </div>
             </div>
+          </div>
+          <!-- Collection Pagination -->
+          <div v-if="collectionTotalPages > 1" class="pagination">
+            <button class="page-btn" :disabled="collectionPage === 1" @click="collectionPage--">&lsaquo;</button>
+            <button
+              v-for="p in collectionTotalPages" :key="'cp'+p"
+              class="page-btn" :class="{ active: collectionPage === p }"
+              @click="collectionPage = p"
+            >{{ p }}</button>
+            <button class="page-btn" :disabled="collectionPage === collectionTotalPages" @click="collectionPage++">&rsaquo;</button>
           </div>
         </div>
 
@@ -274,7 +284,7 @@
 
         <!-- Exam Grid -->
         <div v-else-if="filteredExams.length" class="exam-grid">
-          <div v-for="exam in filteredExams" :key="exam.id" class="exam-card card">
+          <div v-for="exam in pagedExams" :key="exam.id" class="exam-card card">
             <div class="exam-card-header">
               <div class="exam-type-badge" :class="`type-${exam.type}`">
                 {{ typeLabel(exam.type) }}
@@ -342,8 +352,19 @@
           </div>
         </div>
 
+        <!-- Exam Pagination -->
+        <div v-if="!loadingExams && filteredExams.length && examTotalPages > 1" class="pagination">
+          <button class="page-btn" :disabled="examPage === 1" @click="examPage--">&lsaquo;</button>
+          <button
+            v-for="p in examTotalPages" :key="'ep'+p"
+            class="page-btn" :class="{ active: examPage === p }"
+            @click="examPage = p"
+          >{{ p }}</button>
+          <button class="page-btn" :disabled="examPage === examTotalPages" @click="examPage++">&rsaquo;</button>
+        </div>
+
         <!-- Empty State -->
-        <div v-else class="empty-state" style="margin-top:0">
+        <div v-else-if="!loadingExams && !filteredExams.length" class="empty-state" style="margin-top:0">
           <div class="empty-icon">📄</div>
           <p class="empty-title">暂无试卷</p>
           <p class="empty-desc">上传您的第一份试卷开始练习</p>
@@ -370,11 +391,6 @@ const examStore = useExamStore()
 const loadingExams = ref(false)
 const showUpload = ref(false)
 
-onMounted(async () => {
-  loadingExams.value = true
-  await examStore.loadExams()
-  loadingExams.value = false
-})
 const isDragging = ref(false)
 const uploading = ref(false)
 const ocrStatus = ref('')
@@ -394,19 +410,70 @@ const tabs = [
   { label: '写作', value: 'writing' },
 ]
 
-const filteredExams = computed(() => {
-  let list = examStore.exams
-  if (activeTab.value !== 'all') list = list.filter(e => e.type === activeTab.value)
-  if (searchQ.value.trim()) {
-    const q = searchQ.value.toLowerCase()
-    list = list.filter(e => e.title.toLowerCase().includes(q) || e.description?.toLowerCase().includes(q))
+// ── Server-side Pagination ──────────────────────────────────────────────
+const EXAM_PAGE_SIZE = 9
+const COLLECTION_PAGE_SIZE = 6
+
+const examPage = ref(1)
+const collectionPage = ref(1)
+const examTotal = ref(0)
+const pagedExams = ref([])
+
+const examTotalPages = computed(() => Math.ceil(examTotal.value / EXAM_PAGE_SIZE))
+const filteredExams = computed(() => pagedExams.value)
+
+let searchTimer = null
+
+async function fetchExams() {
+  const token = localStorage.getItem('ielts_token') || ''
+  if (!token || token.startsWith('mock_token_')) {
+    pagedExams.value = examStore.exams
+    examTotal.value = examStore.exams.length
+    return
   }
-  return list
+  loadingExams.value = true
+  try {
+    const params = { page: examPage.value, size: EXAM_PAGE_SIZE }
+    if (activeTab.value !== 'all') params.type = activeTab.value
+    if (searchQ.value.trim()) params.search = searchQ.value.trim()
+    const res = await request.get('/exams', { params })
+    const data = res.data || {}
+    const records = data.records || []
+    pagedExams.value = records.map(e => ({
+      id: e.id,
+      title: e.title,
+      description: e.description || '',
+      type: e.type || 'reading',
+      status: e.status,
+      questionCount: e.questionCount || 0,
+      duration: e.duration || 60,
+      difficulty: e.difficulty || '中等',
+      createdAt: e.createdAt ? e.createdAt.substring(0, 10) : new Date().toISOString().split('T')[0],
+      tags: e.tags ? (typeof e.tags === 'string' ? JSON.parse(e.tags) : e.tags) : [],
+      sections: [],
+    }))
+    examTotal.value = data.total || 0
+  } catch { /* ignore */ }
+  loadingExams.value = false
+}
+
+// Re-fetch when page changes (only if not triggered by tab/search reset)
+let skipPageWatch = false
+watch(examPage, () => { if (!skipPageWatch) fetchExams() })
+watch(activeTab, () => { skipPageWatch = true; examPage.value = 1; skipPageWatch = false; fetchExams() })
+watch(searchQ, () => {
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => { skipPageWatch = true; examPage.value = 1; skipPageWatch = false; fetchExams() }, 300)
+})
+
+onMounted(async () => {
+  await fetchExams()
+  await examStore.loadExams()
 })
 
 function getTabCount(tab) {
-  if (tab === 'all') return examStore.exams.length
-  return examStore.exams.filter(e => e.type === tab).length
+  if (tab === 'all') return examTotal.value
+  return '·'
 }
 
 function typeLabel(type) {
@@ -519,6 +586,7 @@ async function handleUpload() {
     uploadFiles.value = []
     uploadForm.value = { title: '', type: 'reading', duration: 60, description: '', parsePrecise: false }
     ElMessage.success('上传成功，正在后台解析，请稍候...')
+    await fetchExams()
     pollExamStatus(examId)
   } catch (e) {
     const msg = e?.message || '上传失败'
@@ -544,7 +612,7 @@ function pollExamStatus(examId) {
         const qRes = await request.get(`/exams/${examId}/questions`)
         examStore.updateParsedExam(examId, exam, qRes.data || [])
         ElMessage.success(`「${exam.title}」解析完成，共 ${(qRes.data || []).length} 道题`)
-        // Reload full list to pick up any split exams auto-created from same PDF
+        await fetchExams()
         await examStore.loadExams()
       } else if (exam.status === 'error' || attempts >= 60) {
         clearInterval(timer)
@@ -567,6 +635,7 @@ async function doDeleteExam(id) {
   await examStore.deleteExam(id)
   confirmDeleteId.value = null
   ElMessage.success('试卷已删除')
+  await fetchExams()
 }
 
 // ── Collection management ──────────────────────────────────────────────
@@ -576,6 +645,13 @@ const showCollectionDetail = ref(false)
 const currentCollection = ref(null)
 const collectionItems = ref([])
 const collectionForm = ref({ title: '', description: '' })
+
+const collectionTotalPages = computed(() => Math.ceil(collections.value.length / COLLECTION_PAGE_SIZE))
+const pagedCollections = computed(() => {
+  const start = (collectionPage.value - 1) * COLLECTION_PAGE_SIZE
+  return collections.value.slice(start, start + COLLECTION_PAGE_SIZE)
+})
+watch(collections, () => { if (collectionPage.value > collectionTotalPages.value) collectionPage.value = 1 })
 
 async function loadCollections() {
   try {
@@ -1263,6 +1339,45 @@ function startCollection(id) {
 .add-exam-row:hover { background: rgba(27, 67, 50, 0.04); }
 .add-exam-name { flex: 1; font-size: 13px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .add-exam-plus { font-size: 18px; font-weight: 700; color: var(--color-primary); flex-shrink: 0; }
+
+/* ── Pagination ──────────────────────────────────────────────────── */
+.pagination {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  margin-top: 24px;
+}
+.page-btn {
+  min-width: 34px;
+  height: 34px;
+  padding: 0 8px;
+  border-radius: var(--radius-md);
+  border: 1.5px solid var(--border-color);
+  background: var(--bg-white);
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.page-btn:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: #F0F7F4;
+}
+.page-btn.active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
+.page-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
 
 @media (max-width: 1024px) {
   .collection-grid { grid-template-columns: repeat(2, 1fr); }

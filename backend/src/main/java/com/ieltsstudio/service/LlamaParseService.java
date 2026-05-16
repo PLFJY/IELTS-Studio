@@ -28,6 +28,10 @@ public class LlamaParseService {
 
     private final ObjectMapper objectMapper;
 
+    private static final HttpClient SHARED_HTTP_CLIENT = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(30))
+            .build();
+
     public boolean isConfigured() {
         return apiKey != null && !apiKey.isBlank();
     }
@@ -39,20 +43,16 @@ public class LlamaParseService {
     public String parseDocument(byte[] fileBytes, String filename) throws Exception {
         if (!isConfigured()) throw new IllegalStateException("LlamaParse API key 未配置，请在 application.yml 中设置 llama-parse.api-key");
 
-        HttpClient client = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(30))
-                .build();
-
-        String jobId = uploadFile(client, fileBytes, filename);
+        String jobId = uploadFile(fileBytes, filename);
         log.info("LlamaParse job created: {}", jobId);
 
         // Poll up to 5 minutes (100 × 3 s)
         for (int i = 0; i < 100; i++) {
             Thread.sleep(3000);
-            String status = getJobStatus(client, jobId);
+            String status = getJobStatus(jobId);
             log.debug("LlamaParse job {} status: {}", jobId, status);
             if ("SUCCESS".equals(status)) {
-                String markdown = getResult(client, jobId);
+                String markdown = getResult(jobId);
                 log.info("LlamaParse job {} done, result length={}", jobId, markdown.length());
                 return markdown;
             } else if ("ERROR".equals(status)) {
@@ -64,7 +64,7 @@ public class LlamaParseService {
 
     // ── private helpers ──────────────────────────────────────────────────────
 
-    private String uploadFile(HttpClient client, byte[] fileBytes, String filename) throws Exception {
+    private String uploadFile(byte[] fileBytes, String filename) throws Exception {
         String boundary = UUID.randomUUID().toString().replace("-", "");
         String CRLF = "\r\n";
 
@@ -89,7 +89,7 @@ public class LlamaParseService {
                 .timeout(Duration.ofSeconds(120))
                 .build();
 
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = SHARED_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
         if (response.statusCode() >= 400) {
             throw new RuntimeException("LlamaParse upload failed HTTP " + response.statusCode() + ": " + response.body());
         }
@@ -97,26 +97,26 @@ public class LlamaParseService {
         return node.path("id").asText();
     }
 
-    private String getJobStatus(HttpClient client, String jobId) throws Exception {
+    private String getJobStatus(String jobId) throws Exception {
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + "/job/" + jobId))
                 .header("Authorization", "Bearer " + apiKey)
                 .GET()
                 .timeout(Duration.ofSeconds(15))
                 .build();
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = SHARED_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
         JsonNode node = objectMapper.readTree(response.body());
         return node.path("status").asText();
     }
 
-    private String getResult(HttpClient client, String jobId) throws Exception {
+    private String getResult(String jobId) throws Exception {
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + "/job/" + jobId + "/result/markdown"))
                 .header("Authorization", "Bearer " + apiKey)
                 .GET()
                 .timeout(Duration.ofSeconds(30))
                 .build();
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = SHARED_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
         if (response.statusCode() >= 400) {
             throw new RuntimeException("LlamaParse result fetch failed HTTP " + response.statusCode());
         }

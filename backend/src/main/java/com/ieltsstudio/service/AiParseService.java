@@ -35,8 +35,18 @@ public class AiParseService {
 
     private final ObjectMapper objectMapper;
 
+    private static final HttpClient SHARED_HTTP_CLIENT = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(15))
+            .build();
+
     private static final java.util.regex.Pattern OPTION_LINE_PATTERN =
-            java.util.regex.Pattern.compile("^([A-P])\\s{2,}(.+)$");
+            java.util.regex.Pattern.compile("^([A-Q])\\s{2,}(.+)$");
+
+    private static final java.util.regex.Pattern INLINE_OPTION_PATTERN =
+            java.util.regex.Pattern.compile("(?<![A-Za-z])([A-Q])\\s+([A-Za-z][A-Za-z\\s'-]*?)(?=\\s+[A-Q]\\s+[A-Za-z]|$)");
+
+    private static final java.util.regex.Pattern HEADING_LINE_PATTERN =
+            java.util.regex.Pattern.compile("^(i{1,3}|iv|vi{0,3}|ix|x)\\s{2,}(.+)$", java.util.regex.Pattern.CASE_INSENSITIVE);
 
     private static final String SYSTEM_PROMPT = """
             你是一个雅思（IELTS）试卷内容解析器。给定从任意雅思试卷（阅读 / 写作 / 听力）中提取出的原始文本，
@@ -52,6 +62,10 @@ public class AiParseService {
             "passages"：字符串数组
               - READING：阅读文章文本（每篇可包含标题+正文）
               - 【重要】READING 的 passages 必须尽量逐字保留原文（英文就输出英文），不要翻译、不要改写、不要总结。
+              - 【极其重要】READING 的 passages 必须保留自然段落结构；自然段之间必须使用两个换行符 "\\n\\n" 分隔，不要把多个自然段合并成一个长段落。
+              - 【极其重要】如果 PDF 提取文本中段落空行丢失，请根据原文版式/语义恢复自然段落边界；但不得改写、总结或重排正文句子。
+              - 【极其重要】如果阅读原文中存在段落标号 A、B、C、D...，必须逐字保留这些段落标号，例如 "A International trade..."、"B What lies behind..."，不得删除、改写或替换成 Passage 1/2/3。
+              - 【极其重要】同一篇阅读文章应作为 passages 数组中的一个字符串；不要把 A、B、C 段落拆成多个 passages 数组元素。
               - 【重要】READING 的 passages【只能包含文章正文】。任何题目说明/题组指令（例如：
                 "Questions 1-6", "Complete the notes below", "Choose NO MORE THAN TWO WORDS from the passage for each answer",
                 "Write your answers in boxes ..."）都必须放在 questions 中（作为题干前缀或单独的题干说明），不要放进 passages。
@@ -70,9 +84,11 @@ public class AiParseService {
               type "tfng"  → True/False/Not Given 或 Yes/No/Not Given
                 字段：questionNumber, type, text, answer（"TRUE"/"FALSE"/"NOT GIVEN" 或
                       "YES"/"NO"/"NOT GIVEN"）, explanation, locatorText
-              type "mcq"   → 选择题（A/B/C/D 等选项）
+              type "mcq"   → 选择题（A/B/C/D 等选项）或标题匹配题（heading matching）
                 字段：questionNumber, type, text, options（JSON对象 {"A":"完整选项文字","B":"完整选项文字",…}）, answer（"A"/"B"/…）, explanation, locatorText
                 - 【重要】options 必须是 JSON 对象（不是数组），每个值必须是选项的完整描述文字，不能只写字母标识。
+                - 【极其重要】options 绝不能写成范围字符串如 "i-vii"、"A-F" 等！必须展开为完整对象，例如 {"i":"Avoiding...","ii":"A successful..."}。
+                - 【重要】对于标题匹配题（heading matching），选项 key 使用小写罗马数字 i/ii/iii/iv/v/vi/vii/viii/ix/x，值为完整标题文字。
                 - 【重要】如果一组题目共享同一个选项列表（如 Questions 9-13 从 A-P 选项中选择），每道题的 options 都必须包含完整选项列表，每个选项值写出描述全文。
               type "fill"  → 填空 / 简答 / 句子完成 / 匹配 / 标题题
                 字段：questionNumber, type, text, answer（单词或短语）, explanation, locatorText
@@ -96,17 +112,20 @@ public class AiParseService {
             通用规则：
               - 保留原始题号。
               - answer：若文本中包含答案则直接复制；否则从文章/题目推导。
-              - locatorText：从文章或题目中截取 3-8 个词的“原文短语”，不可为空。
+              - locatorText：从输入文本中【原样复制】3-8 个连续词作为定位短语，不可为空。
+              - 【极其重要】locatorText 必须是输入文本中真实存在的连续词序列，直接复制粘贴，即使有 OCR 拼写错误也保留原样。
+              - 【极其重要】绝不能自己编造、改写、翻译或概括出一段看似合理但输入文本中不存在的短语。
               - 如果输入明显包含阅读正文（如存在标题+段落），passages 不应为空。
               - 【重要】输入文本可能来自 OCR，包含乱码或噪声字符（如 "CHEER EF-d"、"NSREEHLET" 等）。请忽略这些噪声，尽力从中识别出有效的文章段落和题目。
               - 【重要】questions 数组绝不能为空。即使文本有噪声，只要能识别出"Questions"、"TRUE/FALSE/NOT GIVEN"、选项列表（A-P）等题目标记，就必须提取并输出所有题目。
+              - 【极其重要】如果题目指示为 "Questions 1-5" 或 "Questions 1-13"，则必须输出 questionNumber 1、2、3、4、5（或 1-13）的每一道题，不得跳过任何题号。
+              - 【极其重要】对于标题匹配题（heading matching），如果文章中有 A、B、C、D、E 等标注段落，则必须为每个段落都生成一道题目（text 为 "Paragraph A"、"Paragraph B" 等），不能只生成其中一道。
               - 只返回 JSON 对象本体，不要输出 markdown 代码块，不要输出任何额外说明。
 
             输出示例结构：
             Reading:  {"questionNumber":1,"type":"tfng","text":"…","answer":"TRUE","explanation":"…","locatorText":"…"}
-            Writing:  {"questionNumber":1,"type":"write","text":"WRITING TASK 2\nYou should spend about 40 minutes on this task.\nWrite about the following topic:\n…\nWrite at least 250 words.","taskType":"Task2","answer":"写作思路：1) 明确立场 2) 分析两个关键因素并举例 3) 让步段承认反面观点 4) 总结重申。关键词：subjective, well-being, contribute to","explanation":"Task Achievement: 覆盖所有论点并给出立场。Coherence: 逻辑清晰使用连接词。Vocabulary: 使用同义替换。Grammar: 句式多样。","locatorText":"factors are important in achieving","wordLimit":250}
+            Writing:  {"questionNumber":1,"type":"write","text":"WRITING TASK 2\nYou should spend about 40 minutes on this task.\nWrite about the following topic:\n…\nWrite at least 250 words.","taskType":"Task2","answer":"写作思路与要点","explanation":"Task Achievement: 覆盖所有论点并给出立场。Coherence: 逻辑清晰使用连接词。Vocabulary: 使用同义替换。Grammar: 句式多样。","locatorText":"factors are important in achieving","wordLimit":250}
             Listening:{"questionNumber":1,"type":"fill","text":"…","answer":"…","explanation":"…","locatorText":"…"}
-            【重要】writing 类型的 answer 必须输出"写作思路与要点"（≤60词），不得输出 "N/A" 或 "Model answer" 或完整范文。
             """;
 
     private static final String TRANSLATE_PROMPT = """
@@ -196,10 +215,6 @@ public class AiParseService {
         String requestJson = objectMapper.writeValueAsString(requestBody);
         log.debug("Calling DeepSeek API, input length={}", input.length());
 
-        HttpClient client = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(15))
-                .build();
-
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + "/chat/completions"))
                 .header("Content-Type", "application/json")
@@ -208,7 +223,7 @@ public class AiParseService {
                 .timeout(Duration.ofSeconds(90))
                 .build();
 
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = SHARED_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
 
         if (response.statusCode() >= 400) {
             throw new RuntimeException("DeepSeek API错误 HTTP " + response.statusCode() + ": " + response.body());
@@ -221,8 +236,24 @@ public class AiParseService {
         log.debug("DeepSeek response content length={}", content.length());
 
         Map<String, Object> parsed = objectMapper.readValue(content, Map.class);
-        fixLetterOnlyMcqOptions(parsed, input);
+        postProcess(parsed, input);
         return parsed;
+    }
+
+    /**
+     * Apply all post-processing fixes to a parsed result:
+     * - Enrich letter-only MCQ options with full descriptions
+     * - Enrich roman-numeral-only heading options with full descriptions
+     * - Validate and correct locatorText against passages/raw text
+     *
+     * This is public so that AsyncParseService can call it after assembling workflow results.
+     */
+    public void postProcess(Map<String, Object> parsed, String rawText) {
+        fixInlineStringOptions(parsed, rawText);
+        fixLetterOnlyMcqOptions(parsed, rawText);
+        fixRangeOptions(parsed, rawText);
+        fixMissingHeadingQuestions(parsed, rawText);
+        fixLocatorText(parsed, rawText);
     }
 
     private static final String MULTI_SECTION_PROMPT = """
@@ -240,6 +271,11 @@ public class AiParseService {
 
             "passages"：字符串数组
               - READING：阅读文章文本（每篇可包含标题+正文）
+              - 【极其重要】READING 的 passages 必须保留自然段落结构；自然段之间必须使用两个换行符 "\\n\\n" 分隔，不要把多个自然段合并成一个长段落。
+              - 【极其重要】如果 PDF 提取文本中段落空行丢失，请根据原文版式/语义恢复自然段落边界；但不得改写、总结或重排正文句子。
+              - 【极其重要】如果阅读原文中存在段落标号 A、B、C、D...，必须逐字保留这些段落标号，例如 "A International trade..."、"B What lies behind..."，不得删除、改写或替换成 Passage 1/2/3。
+              - 【极其重要】同一篇阅读文章应作为 passages 数组中的一个字符串；不要把 A、B、C 段落拆成多个 passages 数组元素。
+              - 只有当原文确实包含多篇独立阅读文章（例如 Reading Passage 1、Reading Passage 2、不同 Test）时，才使用多个 passages 元素。
               - WRITING：写作任务的【完整原文】（每个任务一个条目），必须逐字包含所有考试指令，例如 "WRITING TASK 2"、"You should spend about 40 minutes on this task."、"Write about the following topic:"、"Write at least 250 words." 等。不要省略任何原文中的文字。
               - LISTENING：听力 transcript；若没有则为空数组
 
@@ -253,16 +289,22 @@ public class AiParseService {
             - 如果题目要求从一个选项列表（如 A-P、A-H 等）中选择答案，必须标记为 "mcq"，并在 options 中列出所有可选项。
             - options 必须是 JSON 对象格式，每个选项值必须是完整的选项描述文字（不能只写字母标识）。
               例如：{"A":"Rainforests are in danger.","B":"Climate change is the main threat.","C":"..."}
+            - 【极其重要】options 绝不能写成范围字符串如 "i-vii"、"A-F" 等！必须展开为完整对象。
+            - 对于标题匹配题（heading matching），选项 key 使用小写罗马数字，值为完整标题文字，例如 {"i":"Avoiding...","ii":"A successful..."}。
             - 如果一组题目共享同一个选项列表（如 Questions 9-13 从 A-P 中选），每道题的 options 都必须包含完整选项列表。
             - 只有答案是从文章中提取的单词或短语时才使用 "fill"。
             - 选项列表可能出现在一组题目的前面或后面，需要关联到对应的题目。
 
             通用规则：
             - 每个分区内保留原始题号。
-            - locatorText：从文章或题目中截取 3-8 个词的原文短语，不可为空。
+            - locatorText：从输入文本中【原样复制】3-8 个连续词作为定位短语，不可为空。
+            - 【极其重要】locatorText 必须是输入文本中真实存在的连续词序列，直接复制粘贴，即使有 OCR 拼写错误也保留原样。
+            - 【极其重要】绝不能自己编造、改写、翻译或概括出一段看似合理但输入文本中不存在的短语。
             - answer：若有答案区则复制；否则从文章推导。
             - 输入文本可能来自 OCR，包含乱码字符，请忽略噪声，尽力识别有效内容。
             - questions 数组绝不能为空，只要能识别出题目标记就必须提取。
+            - 【极其重要】不得跳过任何题号。如果题目指示为 Questions 1-5，则必须输出 5 道题（questionNumber 1、2、3、4、5）。
+            - 【极其重要】标题匹配题：如果 passage 中有标注段落 A、B、C、D、E，则必须为每个段落都生成一道题目，不能只生成其中一道。
             - 只返回合法 JSON，不要使用 markdown 代码块，不要输出任何额外文字。
 
             返回格式：
@@ -290,10 +332,6 @@ public class AiParseService {
         String requestJson = objectMapper.writeValueAsString(requestBody);
         log.debug("Calling DeepSeek multi-section API, input length={}", input.length());
 
-        HttpClient client = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(15))
-                .build();
-
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + "/chat/completions"))
                 .header("Content-Type", "application/json")
@@ -302,7 +340,7 @@ public class AiParseService {
                 .timeout(Duration.ofSeconds(120))
                 .build();
 
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = SHARED_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
         if (response.statusCode() >= 400) {
             throw new RuntimeException("DeepSeek multi-section API错误 HTTP " + response.statusCode() + ": " + response.body());
         }
@@ -319,12 +357,12 @@ public class AiParseService {
             section.putIfAbsent("type", "reading");
             result = Map.of("sections", List.of(section));
         }
-        // Post-process each section to fix letter-only MCQ options
+        // Post-process each section
         Object sectionsObj = result.get("sections");
         if (sectionsObj instanceof List) {
             for (Object secObj : (List<?>) sectionsObj) {
                 if (secObj instanceof Map) {
-                    fixLetterOnlyMcqOptions((Map<String, Object>) secObj, input);
+                    postProcess((Map<String, Object>) secObj, input);
                 }
             }
         }
@@ -395,7 +433,6 @@ public class AiParseService {
                 Map.of("role", "user", "content", userMsg)
         ));
         String requestJson = objectMapper.writeValueAsString(requestBody);
-        HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(15)).build();
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + "/chat/completions"))
                 .header("Content-Type", "application/json")
@@ -403,7 +440,7 @@ public class AiParseService {
                 .POST(HttpRequest.BodyPublishers.ofString(requestJson, StandardCharsets.UTF_8))
                 .timeout(Duration.ofSeconds(60))
                 .build();
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = SHARED_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
         if (response.statusCode() >= 400) {
             throw new RuntimeException("DeepSeek API错误 HTTP " + response.statusCode());
         }
@@ -454,7 +491,6 @@ public class AiParseService {
                 Map.of("role", "user", "content", truncated)
         ));
         String requestJson = objectMapper.writeValueAsString(requestBody);
-        HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(15)).build();
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + "/chat/completions"))
                 .header("Content-Type", "application/json")
@@ -462,7 +498,7 @@ public class AiParseService {
                 .POST(HttpRequest.BodyPublishers.ofString(requestJson, StandardCharsets.UTF_8))
                 .timeout(Duration.ofSeconds(90))
                 .build();
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = SHARED_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
         if (response.statusCode() >= 400) throw new RuntimeException("DeepSeek API错误 HTTP " + response.statusCode());
         JsonNode root = objectMapper.readTree(response.body());
         String content = root.path("choices").get(0).path("message").path("content").asText().trim();
@@ -495,7 +531,6 @@ public class AiParseService {
                 Map.of("role", "user", "content", userMessage)
         ));
         String requestJson = objectMapper.writeValueAsString(requestBody);
-        HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(15)).build();
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + "/chat/completions"))
                 .header("Content-Type", "application/json")
@@ -503,7 +538,7 @@ public class AiParseService {
                 .POST(HttpRequest.BodyPublishers.ofString(requestJson, StandardCharsets.UTF_8))
                 .timeout(Duration.ofSeconds(timeoutSec))
                 .build();
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = SHARED_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
         if (response.statusCode() >= 400) {
             throw new RuntimeException("DeepSeek API错误 HTTP " + response.statusCode() + ": " + response.body());
         }
@@ -565,7 +600,71 @@ public class AiParseService {
     // ── Workflow: 分步解析（仅 DeepSeek）──────────────────────────────────
     // ══════════════════════════════════════════════════════════════════════
 
-    // Step 1: 提取文章 + 识别题组结构（不要答案和解释，输出极小）
+    // Step 1A: 仅提取文章正文（passages），不涉及题目
+    private static final String WORKFLOW_STEP1A_PROMPT = """
+            你是一个雅思（IELTS）阅读文章提取器。给定从 PDF/Word 中提取的原始文本，
+            请【只提取阅读文章正文】，不要提取任何题目、指令或选项。
+
+            输出 "passages" 字符串数组，每篇独立文章一个元素。
+
+            规则：
+            - 逐字保留原文（英文就输出英文），不翻译、不改写、不总结。
+            - 自然段之间用两个换行符 "\\n\\n" 分隔。
+            - 如果段落空行丢失，根据语义恢复段落边界，但不得改写句子。
+            - 如果原文有段落标号 A、B、C、D…，必须保留，如 "A International trade..."。
+            - 同一篇文章的所有段落放在一个字符串里，不要拆分。
+            - 不要包含任何题目指令（如 "Questions 1-6"、"Complete the notes below" 等）。
+            - 不要包含选项列表或答案区块。
+            - 遇到 "Questions"、编号列表、选项标记时立即停止提取 passage。
+            - 输入文本可能含 OCR 噪声，请忽略乱码，尽力识别有效内容。
+            - 只返回 JSON 对象，不要 markdown 代码块或额外文字。
+
+            输出格式：
+            {"passages": ["文章正文..."]}
+            """;
+
+    // Step 1B: 仅识别题组结构（不需要答案和解释）
+    private static final String WORKFLOW_STEP1B_PROMPT = """
+            你是一个雅思（IELTS）题目结构识别器。给定从 PDF/Word 中提取的原始文本，
+            请识别所有题组并提取题目结构信息。不需要生成答案或解释。
+
+            输出 "questionGroups" 数组，每个题组包含：
+            - "range": 题号范围，如 "1-8"、"9-13"、"14"
+            - "type": 题型，取值 "tfng" | "mcq" | "fill" | "write"
+            - "instruction": 题组指令原文（如 "Do the following statements agree with..."）
+            - "options": 若有共享选项列表，以对象形式列出 {"A":"完整文字","B":"完整文字",...}；若无则省略
+            - "questions": 该组内每道题的原始题干文本数组
+
+            题型判定规则：
+            - 选项列表选择（heading matching、人物/地点匹配、sentence ending matching/句子结尾匹配等）→ "mcq"
+            - 从文章提取词语填空，或从 A-Q 方框词库中选择单词填空 → "fill"
+            - TRUE/FALSE/NOT GIVEN 或 YES/NO/NOT GIVEN → "tfng"
+            - 写作任务 → "write"
+
+            重要规则：
+            - questionGroups 绝不能为空，只要文本中出现 "Questions"、编号、选项列表等标记就必须识别。
+            - 不得跳过任何题号。如 "Questions 1-8" 则 questions 数组必须有 8 个元素。
+            - options 必须是完整文字对象，绝不能写成 "A-F" 等范围字符串。
+            - 对于 sentence ending matching（如 "Complete each sentence with the correct ending, A-G, below"），Q27-31 每道题都必须共享完整 A-G options 对象，绝不能把 options 写成单个答案字母。
+            - 若 fill 题带有 A-Q 方框词库（如 A cost、B falling、C technology），该题组 type 仍为 "fill"，options 必须完整列出词库对象。
+            - 对于 summary completion / notes completion / flow-chart completion 连续填空题，questions 中每个元素必须包含该空格所在的完整句子或足够上下文，绝不能只写 "14..."、"15 ......"。
+              例如：Q14 text = "Research carried out by scientists ... medical problems is 14 ...."，Q15 text = "and that the speed of this change is 15 ...."。
+            - 对于 heading matching，options key 用小写罗马数字（i/ii/iii/…），值为完整标题。
+            - 输入文本可能含 OCR 噪声，请忽略乱码，尽力识别有效内容。
+            - 只返回 JSON 对象，不要 markdown 代码块或额外文字。
+
+            输出格式：
+            {
+              "questionGroups": [
+                {"range":"1-8", "type":"tfng", "instruction":"Do the following...", "questions":["题目1原文","题目2原文",...]}，
+                {"range":"9-13", "type":"mcq", "instruction":"Choose A-P", "options":{"A":"...","B":"...",...}, "questions":["题目9原文",...]}，
+                {"range":"27-31", "type":"mcq", "instruction":"Complete each sentence with the correct ending, A-G, below.", "options":{"A":"was necessary...","B":"was necessary...","C":"was necessary..."}, "questions":["A developed system of numbering",...]}，
+                {"range":"14", "type":"mcq", "instruction":"Choose A, B, C, D or E", "options":{"A":"...","B":"...",...}, "questions":["题目14原文"]}
+              ]
+            }
+            """;
+
+    // Step 1 (legacy combined): 提取文章 + 识别题组结构
     private static final String WORKFLOW_STEP1_PROMPT = """
             你是一个雅思（IELTS）试卷结构分析器。给定从 PDF/Word 中提取的原始文本，请完成以下任务：
 
@@ -577,21 +676,24 @@ public class AiParseService {
                - "range": 题号范围，如 "1-8"、"9-13"、"14"
                - "type": 题型，取值 "tfng" | "mcq" | "fill" | "write"
                - "instruction": 题组指令原文（如 "Do the following statements agree with..."、"Choose the correct responses A-P"、"Complete the notes below. Choose NO MORE THAN TWO WORDS..."）
-               - "options": 若题目有共享选项列表（如 A-P），以对象形式列出 {"A":"…","B":"…",...}；若无则省略
+               - "options": 若题目有共享选项列表（如 A-P 方框词库、heading list），以对象形式列出 {"A":"…","B":"…",...}；若无则省略
                - "questions": 该组内每道题的原始文本数组，如 ["The plight of the rainforests has largely been ignored by the media.", "Children only accept opinions on rainforests that they encounter in their classrooms."]
 
             重要规则：
             - 输入文本可能含 OCR 噪声（乱码字符），请忽略噪声，尽力识别有效内容。
             - questionGroups 绝不能为空。只要文本中出现 "Questions"、编号、TRUE/FALSE/NOT GIVEN、选项列表等标记，就必须识别。
-            - 题型判定：选项列表选择题（如 A-P 中选）→ "mcq"；从文章提取词语填空 → "fill"；判断题 → "tfng"；写作 → "write"。
+            - 题型判定：heading/person/place/sentence ending 等匹配选择题 → "mcq"；从文章提取词语填空或 A-Q 方框词库填空 → "fill"；判断题 → "tfng"；写作 → "write"。
+            - 对于 sentence ending matching（如 "Complete each sentence with the correct ending, A-G, below"），每道题都必须共享完整 A-G options 对象，绝不能把 options 写成单个答案字母。
+            - 若 fill 题带有 A-Q 方框词库（如 A cost、B falling、C technology），该题组 type 仍为 "fill"，options 必须完整列出词库对象。
+            - 对于 summary completion / notes completion / flow-chart completion 连续填空题，questions 中每个元素必须包含该空格所在的完整句子或足够上下文，绝不能只写 "14..."、"15 ......"。
             - 只返回 JSON 对象，不要输出 markdown 代码块或额外文字。
 
             输出格式：
             {
               "passages": ["文章正文..."],
               "questionGroups": [
-                {"range":"1-8", "type":"tfng", "instruction":"Do the following...", "questions":["题目1原文","题目2原文",...]},
-                {"range":"9-13", "type":"mcq", "instruction":"Choose the correct responses A-P", "options":{"A":"...","B":"...",...}, "questions":["题目9原文","题目10原文",...]},
+                {"range":"1-8", "type":"tfng", "instruction":"Do the following...", "questions":["题目1原文","题目2原文",...]}，
+                {"range":"9-13", "type":"mcq", "instruction":"Choose the correct responses A-P", "options":{"A":"...","B":"...",...}, "questions":["题目9原文","题目10原文",...]}，
                 {"range":"14", "type":"mcq", "instruction":"Choose the correct letter, A, B, C, D or E", "options":{"A":"...","B":"...",...}, "questions":["题目14原文"]}
               ]
             }
@@ -619,10 +721,12 @@ public class AiParseService {
             - 只返回 JSON 对象 {"questions":[...]}，不要 markdown 代码块或额外文字。
             - answer 必须基于文章内容推导，不能胡编。
             - explanation 要具体引用文章原文。
+            - text 必须原样保留 Step1 中的题干，不要压缩、改写或只保留题号。
+            - 对于 summary/notes/flow-chart 连续填空题，如果 Step1 提供了完整上下文句子，必须完整返回该句子。
             """;
 
     /**
-     * Workflow Step 1: Extract passages and question group skeleton (no answers).
+     * Workflow Step 1 (legacy combined): Extract passages and question group skeleton (no answers).
      */
     @SuppressWarnings("unchecked")
     public Map<String, Object> workflowStep1(String rawText) throws Exception {
@@ -636,6 +740,42 @@ public class AiParseService {
                 "请分析以下IELTS试题文本，提取文章和题组结构：\n\n" + input,
                 4096, 90);
         log.info("Workflow Step1: response length={}", content.length());
+        return objectMapper.readValue(content, Map.class);
+    }
+
+    /**
+     * Workflow Step 1A: Extract passages only (focused, short prompt).
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> workflowStep1A(String rawText) throws Exception {
+        if (!isConfigured()) throw new IllegalStateException("DeepSeek API key未配置");
+        String testText = findTestContent(rawText);
+        String input = testText.length() > textMaxChars
+                ? testText.substring(0, textMaxChars) + "\n...[截断]"
+                : testText;
+        log.info("Workflow Step1A (passages): sending {} chars to DeepSeek", input.length());
+        String content = callDeepSeek(WORKFLOW_STEP1A_PROMPT,
+                "请从以下IELTS试题文本中提取阅读文章正文：\n\n" + input,
+                4096, 90);
+        log.info("Workflow Step1A: response length={}", content.length());
+        return objectMapper.readValue(content, Map.class);
+    }
+
+    /**
+     * Workflow Step 1B: Identify question groups structure only (focused, short prompt).
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> workflowStep1B(String rawText) throws Exception {
+        if (!isConfigured()) throw new IllegalStateException("DeepSeek API key未配置");
+        String testText = findTestContent(rawText);
+        String input = testText.length() > textMaxChars
+                ? testText.substring(0, textMaxChars) + "\n...[截断]"
+                : testText;
+        log.info("Workflow Step1B (questions): sending {} chars to DeepSeek", input.length());
+        String content = callDeepSeek(WORKFLOW_STEP1B_PROMPT,
+                "请从以下IELTS试题文本中识别所有题组结构：\n\n" + input,
+                4096, 90);
+        log.info("Workflow Step1B: response length={}", content.length());
         return objectMapper.readValue(content, Map.class);
     }
 
@@ -685,14 +825,13 @@ public class AiParseService {
                                 "}")
         ));
         String requestJson = objectMapper.writeValueAsString(requestBody);
-        HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(15)).build();
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + "/chat/completions"))
                 .header("Content-Type", "application/json")
                 .header("Authorization", "Bearer " + apiKey)
                 .POST(HttpRequest.BodyPublishers.ofString(requestJson, StandardCharsets.UTF_8))
                 .build();
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        HttpResponse<String> response = SHARED_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         if (response.statusCode() >= 400) {
             throw new RuntimeException("DeepSeek 翻译请求失败：HTTP " + response.statusCode() + " - " + response.body());
         }
@@ -739,7 +878,51 @@ public class AiParseService {
     }
 
     /**
-     * Post-processing: detect MCQ questions with letter-only options (e.g. ["A","B","C",...])
+     * Post-processing: detect inline string options like
+     * "A cost B falling C technology ..." and convert them into JSON objects.
+     */
+    @SuppressWarnings("unchecked")
+    private void fixInlineStringOptions(Map<String, Object> parsed, String rawText) {
+        Object questionsObj = parsed.get("questions");
+        if (!(questionsObj instanceof List)) return;
+        List<Map<String, Object>> questions = (List<Map<String, Object>>) questionsObj;
+
+        Map<String, String> optionMapFromRaw = null;
+        int fixed = 0;
+        for (Map<String, Object> q : questions) {
+            Object opts = q.get("options");
+            if (!(opts instanceof String)) continue;
+
+            Map<String, String> optionMap = parseInlineOptionString((String) opts);
+            if (optionMap.size() < 3 && String.valueOf(opts).trim().matches("^[A-Q]$")) {
+                if (optionMapFromRaw == null) {
+                    optionMapFromRaw = extractOptionDescriptions(rawText);
+                }
+                optionMap = optionMapFromRaw;
+            }
+            if (optionMap.size() >= 3) {
+                q.put("options", optionMap);
+                fixed++;
+            }
+        }
+        if (fixed > 0) {
+            log.info("fixInlineStringOptions: converted {} inline option strings", fixed);
+        }
+    }
+
+    private Map<String, String> parseInlineOptionString(String optionsText) {
+        Map<String, String> options = new LinkedHashMap<>();
+        if (optionsText == null || optionsText.isBlank()) return options;
+
+        java.util.regex.Matcher inline = INLINE_OPTION_PATTERN.matcher(optionsText.trim());
+        while (inline.find()) {
+            options.put(inline.group(1), inline.group(2).trim());
+        }
+        return options;
+    }
+
+    /**
+     * Post-processing: detect questions with letter-only options (e.g. ["A","B","C",...])
      * and attempt to extract full option descriptions from the raw input text.
      */
     @SuppressWarnings("unchecked")
@@ -748,10 +931,11 @@ public class AiParseService {
         if (!(questionsObj instanceof List)) return;
         List<Map<String, Object>> questions = (List<Map<String, Object>>) questionsObj;
 
-        // Find MCQ questions with letter-only options
+        // Find questions with letter-only options (MCQ and word-bank fill questions)
         List<Map<String, Object>> broken = new ArrayList<>();
         for (Map<String, Object> q : questions) {
-            if (!"mcq".equals(q.get("type"))) continue;
+            Object type = q.get("type");
+            if (!"mcq".equals(type) && !"fill".equals(type)) continue;
             if (isLetterOnlyOptions(q.get("options"))) broken.add(q);
         }
         if (broken.isEmpty()) return;
@@ -763,7 +947,7 @@ public class AiParseService {
                     broken.size(), optionMap.size());
             return;
         }
-        log.info("fixLetterOnlyMcqOptions: enriching {} MCQ questions with {} extracted options", broken.size(), optionMap.size());
+        log.info("fixLetterOnlyMcqOptions: enriching {} questions with {} extracted options", broken.size(), optionMap.size());
 
         for (Map<String, Object> q : broken) {
             Object opts = q.get("options");
@@ -839,6 +1023,462 @@ public class AiParseService {
         if (currentLetter != null) {
             options.put(currentLetter, currentText.toString().trim());
         }
+        if (options.size() < 3) {
+            options.clear();
+            for (String line : lines) {
+                String trimmed = line.trim();
+                java.util.regex.Matcher markerCounter = java.util.regex.Pattern
+                        .compile("(?<![A-Za-z])([A-Q])\\s+[A-Za-z]")
+                        .matcher(trimmed);
+                int markerCount = 0;
+                while (markerCounter.find()) markerCount++;
+                if (markerCount < 2) continue;
+
+                java.util.regex.Matcher inline = INLINE_OPTION_PATTERN.matcher(trimmed);
+                while (inline.find()) {
+                    options.put(inline.group(1), inline.group(2).trim());
+                }
+            }
+        }
         return options;
+    }
+
+    // ─── Range options fix (e.g. "i-vii" → proper heading objects) ────────────
+
+    /**
+     * Detect MCQ questions whose options is a range string like "i-vii" or "A-F"
+     * and replace with properly extracted heading/option objects from raw text.
+     */
+    @SuppressWarnings("unchecked")
+    private void fixRangeOptions(Map<String, Object> parsed, String rawText) {
+        Object questionsObj = parsed.get("questions");
+        if (!(questionsObj instanceof List)) return;
+        List<Map<String, Object>> questions = (List<Map<String, Object>>) questionsObj;
+
+        Map<String, String> headingMap = null; // lazy-init: regex first, then AI fallback
+
+        for (Map<String, Object> q : questions) {
+            if (!"mcq".equals(q.get("type"))) continue;
+            Object opts = q.get("options");
+            if (opts == null) continue;
+
+            // Detect range string like "i-vii", "i-viii", "A-F", etc.
+            if (opts instanceof String) {
+                String s = ((String) opts).trim();
+                if (s.matches("(?i)[ivx]+-[ivx]+") || s.matches("[A-Z]-[A-Z]")) {
+                    if (headingMap == null) headingMap = getHeadingMap(rawText);
+                    if (!headingMap.isEmpty()) {
+                        q.put("options", new LinkedHashMap<>(headingMap));
+                        log.info("fixRangeOptions: replaced range '{}' with {} extracted headings for Q{}",
+                                s, headingMap.size(), q.get("questionNumber"));
+                    }
+                }
+            }
+            // Detect array of roman numerals ["i","ii","iii",...] without descriptions
+            if (opts instanceof List) {
+                List<?> list = (List<?>) opts;
+                boolean allRomanNumerals = list.size() >= 3 && list.stream().allMatch(o -> {
+                    String v = String.valueOf(o).trim().toLowerCase();
+                    return v.matches("^(i{1,3}|iv|vi{0,3}|ix|x{1,3})$");
+                });
+                if (allRomanNumerals) {
+                    if (headingMap == null) headingMap = getHeadingMap(rawText);
+                    if (!headingMap.isEmpty()) {
+                        Map<String, String> enriched = new LinkedHashMap<>();
+                        for (Object o : list) {
+                            String key = String.valueOf(o).trim().toLowerCase();
+                            enriched.put(key, headingMap.getOrDefault(key, key));
+                        }
+                        q.put("options", enriched);
+                        log.info("fixRangeOptions: enriched roman numeral array with {} headings for Q{}",
+                                headingMap.size(), q.get("questionNumber"));
+                    }
+                    continue;
+                }
+                // Single uppercase letters already handled by fixLetterOnlyMcqOptions
+                boolean allSingleChar = list.size() >= 3 && list.stream().allMatch(o -> {
+                    String v = String.valueOf(o).trim();
+                    return v.length() == 1 && Character.isLetter(v.charAt(0));
+                });
+                if (allSingleChar) {
+                    continue;
+                }
+            }
+            // Detect map where key == value for roman numerals {"i":"i","ii":"ii",...}
+            if (opts instanceof Map) {
+                Map<?, ?> map = (Map<?, ?>) opts;
+                boolean allRomanKV = map.size() >= 3 && map.entrySet().stream().allMatch(e -> {
+                    String k = String.valueOf(e.getKey()).trim().toLowerCase();
+                    String v = String.valueOf(e.getValue()).trim().toLowerCase();
+                    return k.equals(v) && k.matches("^(i{1,3}|iv|vi{0,3}|ix|x{1,3})$");
+                });
+                if (allRomanKV) {
+                    if (headingMap == null) headingMap = getHeadingMap(rawText);
+                    if (!headingMap.isEmpty()) {
+                        Map<String, String> enriched = new LinkedHashMap<>();
+                        for (Object key : map.keySet()) {
+                            String k = String.valueOf(key).trim().toLowerCase();
+                            enriched.put(k, headingMap.getOrDefault(k, k));
+                        }
+                        q.put("options", enriched);
+                        log.info("fixRangeOptions: enriched roman numeral map with {} headings for Q{}",
+                                headingMap.size(), q.get("questionNumber"));
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Get heading descriptions: try regex extraction first, fall back to AI extraction.
+     */
+    private Map<String, String> getHeadingMap(String rawText) {
+        Map<String, String> headings = extractHeadingDescriptions(rawText);
+        if (headings.size() >= 3) return headings;
+        log.info("getHeadingMap: regex extraction found only {} headings, trying AI fallback", headings.size());
+        Map<String, String> aiHeadings = extractHeadingsWithAi(rawText);
+        return aiHeadings.size() >= 3 ? aiHeadings : headings;
+    }
+
+    /**
+     * Extract heading list from raw text, e.g.:
+     *   i    Avoiding an overcrowded centre
+     *   ii   A successful exercise in people power
+     * Returns map like {"i": "Avoiding an overcrowded centre", "ii": "A successful exercise..."}
+     */
+    private Map<String, String> extractHeadingDescriptions(String rawText) {
+        Map<String, String> headings = new LinkedHashMap<>();
+        if (rawText == null) return headings;
+
+        String[] lines = rawText.split("\\n");
+        String currentKey = null;
+        StringBuilder currentText = new StringBuilder();
+
+        for (String line : lines) {
+            String trimmed = line.trim();
+            java.util.regex.Matcher m = HEADING_LINE_PATTERN.matcher(trimmed);
+            if (m.matches()) {
+                if (currentKey != null) {
+                    headings.put(currentKey, currentText.toString().trim());
+                }
+                currentKey = m.group(1).toLowerCase();
+                currentText = new StringBuilder(m.group(2));
+            } else if (currentKey != null && !trimmed.isEmpty()
+                    && !trimmed.matches("^\\d+\\s+.*")
+                    && !trimmed.matches("(?i)^questions?\\s+.*")
+                    && trimmed.length() < 100) {
+                // Continuation line
+                currentText.append(" ").append(trimmed);
+            } else if (currentKey != null) {
+                headings.put(currentKey, currentText.toString().trim());
+                currentKey = null;
+            }
+        }
+        if (currentKey != null) {
+            headings.put(currentKey, currentText.toString().trim());
+        }
+
+        // Also try matching with dots/colons: "i. Heading text" or "i: Heading text"
+        if (headings.size() < 3) {
+            headings.clear();
+            java.util.regex.Pattern dotPattern = java.util.regex.Pattern.compile(
+                    "^(i{1,3}|iv|vi{0,3}|ix|x)[.):：]\\s*(.+)$", java.util.regex.Pattern.CASE_INSENSITIVE);
+            for (String line : lines) {
+                String trimmed = line.trim();
+                java.util.regex.Matcher m = dotPattern.matcher(trimmed);
+                if (m.matches()) {
+                    headings.put(m.group(1).toLowerCase(), m.group(2).trim());
+                }
+            }
+        }
+        return headings;
+    }
+
+    // ─── Missing heading matching questions fix ──────────────────────────────
+
+    /**
+     * Detect heading matching questions (MCQ with "Paragraph X" text and roman numeral options)
+     * and auto-generate missing paragraph questions when the AI only produced some of them.
+     *
+     * For example, if passages contain paragraphs A-E but only Q1 "Paragraph A" exists,
+     * this method creates Q2 "Paragraph B", Q3 "Paragraph C", etc. with the same options.
+     */
+    @SuppressWarnings("unchecked")
+    private void fixMissingHeadingQuestions(Map<String, Object> parsed, String rawText) {
+        Object questionsObj = parsed.get("questions");
+        if (!(questionsObj instanceof List)) return;
+        List<Map<String, Object>> questions = (List<Map<String, Object>>) questionsObj;
+
+        // Find existing heading matching questions (text like "Paragraph A", "Paragraph B", etc.)
+        Map<String, Map<String, Object>> existingParaQuestions = new LinkedHashMap<>();
+        Map<String, Object> templateQuestion = null;
+        int templateQuestionNumber = -1;
+
+        for (Map<String, Object> q : questions) {
+            String text = String.valueOf(q.getOrDefault("text", "")).trim();
+            if ("mcq".equals(q.get("type")) && text.matches("(?i)Paragraph\\s+[A-Z]")) {
+                String paraLetter = text.replaceAll("(?i)Paragraph\\s+", "").toUpperCase();
+                existingParaQuestions.put(paraLetter, q);
+                if (templateQuestion == null) {
+                    templateQuestion = q;
+                    Object num = q.get("questionNumber");
+                    templateQuestionNumber = num instanceof Number ? ((Number) num).intValue() : 1;
+                }
+            }
+        }
+
+        // No heading matching questions found at all — nothing to fix
+        if (templateQuestion == null) return;
+
+        // Detect lettered paragraphs in passages and raw text
+        List<String> detectedParagraphs = detectParagraphLetters(parsed, rawText);
+        if (detectedParagraphs.size() <= 1) return;
+
+        // Check if there are missing paragraph questions
+        List<String> missingParas = new ArrayList<>();
+        for (String para : detectedParagraphs) {
+            if (!existingParaQuestions.containsKey(para)) {
+                missingParas.add(para);
+            }
+        }
+
+        if (missingParas.isEmpty()) return;
+
+        log.info("fixMissingHeadingQuestions: found {} existing paragraph questions, {} paragraphs detected, {} missing: {}",
+                existingParaQuestions.size(), detectedParagraphs.size(), missingParas.size(), missingParas);
+
+        // Generate missing questions using the template
+        Object templateOptions = templateQuestion.get("options");
+        int nextNum = templateQuestionNumber + 1;
+
+        // Determine insertion index: right after the template question
+        int insertIdx = questions.indexOf(templateQuestion) + 1;
+
+        for (String para : detectedParagraphs) {
+            if (existingParaQuestions.containsKey(para)) {
+                // Update question number to maintain order
+                Map<String, Object> existing = existingParaQuestions.get(para);
+                int existingIdx = questions.indexOf(existing);
+                if (existingIdx >= 0) {
+                    nextNum = ((Number) existing.getOrDefault("questionNumber", nextNum)).intValue() + 1;
+                    insertIdx = existingIdx + 1;
+                }
+                continue;
+            }
+
+            Map<String, Object> newQ = new LinkedHashMap<>();
+            newQ.put("questionNumber", nextNum);
+            newQ.put("type", "mcq");
+            newQ.put("text", "Paragraph " + para);
+            if (templateOptions != null) newQ.put("options", templateOptions);
+            newQ.put("answer", "");
+            newQ.put("explanation", "此题由系统自动补全，请手动作答");
+            newQ.put("locatorText", "");
+
+            questions.add(insertIdx, newQ);
+            insertIdx++;
+            nextNum++;
+            log.info("fixMissingHeadingQuestions: generated Q{} 'Paragraph {}'", newQ.get("questionNumber"), para);
+        }
+
+        // Re-number sequential heading questions starting from the template
+        renumberHeadingQuestions(questions, templateQuestionNumber, detectedParagraphs);
+    }
+
+    /**
+     * Detect lettered paragraphs (A, B, C, ...) from passages and raw text.
+     */
+    @SuppressWarnings("unchecked")
+    private List<String> detectParagraphLetters(Map<String, Object> parsed, String rawText) {
+        Set<String> found = new LinkedHashSet<>();
+        String combined = "";
+
+        // Check passages
+        Object passagesObj = parsed.get("passages");
+        if (passagesObj instanceof List) {
+            combined = String.join("\n", (List<String>) passagesObj);
+        }
+        if (rawText != null) combined += "\n" + rawText;
+
+        // Look for paragraph markers like "A In fact,", "B In the UK,", etc.
+        // These are typically a single letter at the start of a line followed by a space and text
+        java.util.regex.Pattern paraPattern = java.util.regex.Pattern.compile(
+                "(?m)^\\s*([A-Z])\\s+[A-Z][a-z]");
+        java.util.regex.Matcher m = paraPattern.matcher(combined);
+        while (m.find()) {
+            found.add(m.group(1));
+        }
+
+        // Sort alphabetically
+        List<String> sorted = new ArrayList<>(found);
+        sorted.sort(String::compareTo);
+
+        // Only return if we have at least 2 consecutive letters (to avoid false positives)
+        if (sorted.size() >= 2) {
+            return sorted;
+        }
+        return List.of();
+    }
+
+    /**
+     * Re-number heading matching questions to be sequential.
+     */
+    private void renumberHeadingQuestions(List<Map<String, Object>> questions, int startNum, List<String> paragraphs) {
+        int num = startNum;
+        for (String para : paragraphs) {
+            for (Map<String, Object> q : questions) {
+                String text = String.valueOf(q.getOrDefault("text", "")).trim();
+                if (text.equalsIgnoreCase("Paragraph " + para)) {
+                    q.put("questionNumber", num);
+                    break;
+                }
+            }
+            num++;
+        }
+    }
+
+    // ─── AI-based heading extraction fallback ─────────────────────────────────
+
+    private static final String HEADING_EXTRACTION_PROMPT = """
+            你是一个雅思（IELTS）标题列表提取器。给定的文本中包含一个"List of Headings"，
+            其中每个选项都是罗马数字编号（i, ii, iii, iv, v, vi, vii, viii, ix, x 等）加上对应的标题描述。
+
+            请提取所有标题选项，返回 JSON 对象。
+
+            规则：
+            - key 为小写罗马数字（i, ii, iii, ...）
+            - value 为该标题的完整英文描述文字
+            - 只返回 JSON 对象，不要 markdown 代码块或额外文字
+            - 如果找不到标题列表，返回空对象 {}
+
+            输出格式：
+            {"i":"Avoiding an overcrowded centre","ii":"A successful exercise in people power",...}
+            """;
+
+    /**
+     * Fallback: use AI to extract heading descriptions when regex extraction fails.
+     * Returns a map of roman numeral -> heading description, or empty map if failed.
+     */
+    @SuppressWarnings("unchecked")
+    private Map<String, String> extractHeadingsWithAi(String rawText) {
+        if (!isConfigured() || rawText == null) return Map.of();
+        try {
+            String input = rawText.length() > textMaxChars
+                    ? rawText.substring(0, textMaxChars) : rawText;
+            log.info("extractHeadingsWithAi: calling AI to extract heading list...");
+            String content = callDeepSeek(HEADING_EXTRACTION_PROMPT,
+                    "请从以下IELTS试题文本中提取 List of Headings 中的所有标题选项：\n\n" + input,
+                    1024, 60);
+            Map<String, String> result = objectMapper.readValue(content,
+                    objectMapper.getTypeFactory().constructMapType(LinkedHashMap.class, String.class, String.class));
+            log.info("extractHeadingsWithAi: extracted {} headings", result.size());
+            return result;
+        } catch (Exception e) {
+            log.warn("extractHeadingsWithAi failed: {}", e.getMessage());
+            return Map.of();
+        }
+    }
+
+    // ─── locatorText validation & correction ─────────────────────────────────
+
+    /**
+     * Validate each question's locatorText against passages + raw input text.
+     * If locatorText is not found verbatim, attempt fuzzy correction by searching
+     * for the best overlapping substring in the combined text.
+     */
+    @SuppressWarnings("unchecked")
+    private void fixLocatorText(Map<String, Object> parsed, String rawText) {
+        Object questionsObj = parsed.get("questions");
+        if (!(questionsObj instanceof List)) return;
+        List<Map<String, Object>> questions = (List<Map<String, Object>>) questionsObj;
+
+        // Build combined search text from passages + raw input
+        StringBuilder sb = new StringBuilder();
+        Object passagesObj = parsed.get("passages");
+        if (passagesObj instanceof List) {
+            for (Object p : (List<?>) passagesObj) sb.append(p).append("\n");
+        }
+        sb.append("\n").append(rawText != null ? rawText : "");
+        String combined = sb.toString().toLowerCase();
+
+        int fixed = 0;
+        for (Map<String, Object> q : questions) {
+            String locator = q.get("locatorText") != null ? q.get("locatorText").toString().trim() : "";
+            if (locator.isEmpty()) continue;
+
+            // Check if locatorText exists verbatim (case-insensitive)
+            if (combined.contains(locator.toLowerCase())) continue;
+
+            // Not found — try to find the best matching window in combined text
+            String corrected = findBestMatch(combined, locator.toLowerCase());
+            if (corrected != null && !corrected.isEmpty()) {
+                q.put("locatorText", corrected);
+                fixed++;
+            }
+        }
+        if (fixed > 0) {
+            log.info("fixLocatorText: corrected {} locatorText entries", fixed);
+        }
+    }
+
+    /**
+     * Find the substring in `text` that best matches `target` using word-overlap scoring.
+     * Returns the best matching window of similar word count, or null if no reasonable match.
+     */
+    private String findBestMatch(String textLower, String targetLower) {
+        String[] targetWords = targetLower.split("\\s+");
+        if (targetWords.length < 2) return null;
+
+        // Build a set of meaningful target words (length >= 3)
+        Set<String> targetSet = new HashSet<>();
+        for (String w : targetWords) {
+            if (w.length() >= 3) targetSet.add(w);
+        }
+        if (targetSet.size() < 2) return null;
+
+        // Split combined text into sentences by newline / period
+        String[] sentences = textLower.split("[\\n.]+");
+        String bestSentence = null;
+        double bestScore = 0;
+
+        for (String sent : sentences) {
+            String trimmed = sent.trim();
+            if (trimmed.length() < 10) continue;
+            String[] words = trimmed.split("\\s+");
+            int hits = 0;
+            for (String w : words) {
+                if (targetSet.contains(w)) hits++;
+            }
+            double score = (double) hits / targetSet.size();
+            if (score > bestScore) {
+                bestScore = score;
+                bestSentence = trimmed;
+            }
+        }
+
+        // Require at least 40% word overlap to consider it a match
+        if (bestScore < 0.4 || bestSentence == null) return null;
+
+        // Extract a window of ~targetWords.length words from the best sentence
+        String[] sentWords = bestSentence.split("\\s+");
+        int windowSize = Math.min(targetWords.length + 2, sentWords.length);
+        int bestStart = 0;
+        int bestHits = 0;
+        for (int i = 0; i <= sentWords.length - windowSize; i++) {
+            int hits = 0;
+            for (int j = i; j < i + windowSize; j++) {
+                if (targetSet.contains(sentWords[j])) hits++;
+            }
+            if (hits > bestHits) {
+                bestHits = hits;
+                bestStart = i;
+            }
+        }
+        StringBuilder result = new StringBuilder();
+        for (int i = bestStart; i < bestStart + windowSize && i < sentWords.length; i++) {
+            if (result.length() > 0) result.append(" ");
+            result.append(sentWords[i]);
+        }
+        return result.toString();
     }
 }

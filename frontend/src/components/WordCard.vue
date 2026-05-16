@@ -91,7 +91,6 @@ watch(() => props.word?.id, () => {
   shownAt.value = Date.now()
   meaningRevealed.value = false
   userChoice.value = null
-  if (props.word?.word) playWord(props.word.word)
 }, { immediate: true })
 
 function animate(cb) {

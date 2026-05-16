@@ -40,10 +40,14 @@ public class ExamController {
 
     // ─── 试卷查询 ──────────────────────────────────────────────────────────────
 
-    /** GET /exams — 获取当前用户的所有试卷 */
+    /** GET /exams — 分页获取当前用户的试卷（支持 type/search 筛选） */
     @GetMapping
-    public Result<?> getUserExams(@AuthenticationPrincipal AuthUser authUser) {
-        return Result.success(examService.getUserExams(authUser.getId()));
+    public Result<?> getUserExams(@AuthenticationPrincipal AuthUser authUser,
+                                  @RequestParam(defaultValue = "1") int page,
+                                  @RequestParam(defaultValue = "9") int size,
+                                  @RequestParam(required = false) String type,
+                                  @RequestParam(required = false) String search) {
+        return Result.success(examService.getUserExamsPaged(authUser.getId(), page, size, type, search));
     }
 
     /** GET /exams/{id} — 获取试卷详情 */

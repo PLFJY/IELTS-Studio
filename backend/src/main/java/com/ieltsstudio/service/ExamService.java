@@ -50,6 +50,23 @@ public class ExamService {
         return examMapper.findByUserId(userId);
     }
 
+    /** 分页获取试卷列表（支持按类型、关键词筛选） */
+    public Map<String, Object> getUserExamsPaged(Long userId, int page, int size, String type, String search) {
+        if (page < 1) page = 1;
+        if (size < 1) size = 9;
+        String typeParam = (type == null || type.isBlank() || "all".equals(type)) ? null : type;
+        String searchParam = (search == null || search.isBlank()) ? null : search.trim();
+        int offset = (page - 1) * size;
+        List<Exam> records = examMapper.findByUserIdPaged(userId, typeParam, searchParam, offset, size);
+        int total = examMapper.countByUserIdFiltered(userId, typeParam, searchParam);
+        Map<String, Object> result = new HashMap<>();
+        result.put("records", records);
+        result.put("total", total);
+        result.put("page", page);
+        result.put("size", size);
+        return result;
+    }
+
     /** 根据 ID 获取试卷详情 */
     public Exam getExamById(Long examId) {
         return examMapper.selectById(examId);
@@ -169,6 +186,8 @@ public class ExamService {
         int gradableTotal = 0; // 可判分题数（不含写作题）
         List<Map<String, Object>> results = new ArrayList<>();
 
+        List<ErrorBook> errorEntries = new ArrayList<>();
+
         for (Question q : questions) {
             boolean isWrite = "write".equals(q.getType());
             String rawUserAnswer = userAnswers.getOrDefault(q.getId(), "");
@@ -197,7 +216,7 @@ public class ExamService {
             qResult.put("options", q.getOptions());
             results.add(qResult);
 
-            // 客观题答错且有作答时，自动写入错题本
+            // 客观题答错且有作答时，收集到批量列表
             if (!isWrite && !isCorrect && !rawUserAnswer.isBlank()) {
                 ErrorBook entry = new ErrorBook();
                 entry.setUserId(userId);
@@ -207,8 +226,13 @@ public class ExamService {
                 entry.setCorrectAnswer(q.getAnswer());
                 entry.setReviewCount(0);
                 entry.setMastered(0);
-                errorBookMapper.insert(entry);
+                errorEntries.add(entry);
             }
+        }
+
+        // 批量写入错题本，减少事务内 SQL 次数
+        if (!errorEntries.isEmpty()) {
+            errorBookMapper.insertBatch(errorEntries);
         }
 
         // 根据正确率计算雅思 Band 分
@@ -368,8 +392,8 @@ public class ExamService {
         questionMapper.delete(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<Question>()
                 .eq(Question::getExamId, examId));
 
-        // 4. 最后删除试卷本身
-        examMapper.deleteById(examId);
+        // 4. 最后物理删除试卷本身
+        examMapper.physicalDeleteById(examId, userId);
 
         log.info("已删除试卷 {} 及其所有关联数据，操作用户: {}", examId, userId);
         return true;

@@ -24,7 +24,7 @@ public class AsyncWordService {
 
     private static final int MAX_WORDS_PER_UPLOAD = 30;
 
-    @Async
+    @Async("asyncParseExecutor")
     public void processWordFile(Long userId, Long bookId, byte[] fileBytes, String filename) {
         WordBook book = wordBookMapper.selectById(bookId);
         if (book == null || !book.getUserId().equals(userId)) return;
@@ -85,7 +85,7 @@ public class AsyncWordService {
         }
     }
 
-    @Async
+    @Async("asyncParseExecutor")
     public void quickAddWords(Long userId, Long bookId, List<String> rawWords) {
         if (rawWords == null || rawWords.isEmpty()) return;
         log.info("Quick-add {} words to book {} for user {}", rawWords.size(), bookId, userId);

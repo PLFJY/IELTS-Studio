@@ -40,7 +40,7 @@
 
         <!-- Translate bubble -->
         <div
-          v-if="translateBubble.show"
+          v-if="translateBubble.show && translateBubble.host === 'passage'"
           class="translate-bubble"
           :style="{ left: translateBubble.x + 'px', top: translateBubble.y + 'px' }"
         >
@@ -89,13 +89,32 @@
                 <span class="passage-section-badge">{{ para.label }}</span>
               </div>
             </template>
-            <p class="passage-para" :data-para-idx="idx" v-html="para.html"></p>
+            <p v-else :class="['passage-para', { 'labeled-para': para.paragraphLabel }]" :data-para-idx="idx">
+              <span v-if="para.paragraphLabel" class="passage-letter">{{ para.paragraphLabel }}</span>
+              <span class="passage-text" v-html="para.html"></span>
+            </p>
           </template>
         </div>
       </div>
 
       <!-- RIGHT: Questions -->
-      <div class="questions-col">
+      <div class="questions-col" ref="questionsColRef">
+        <div
+          v-if="translateBubble.show && translateBubble.host === 'questions'"
+          class="translate-bubble"
+          :style="{ left: translateBubble.x + 'px', top: translateBubble.y + 'px' }"
+        >
+          <div class="tb-actions">
+            <button class="tb-btn" :disabled="translateBubble.loading" @click="doTranslate">
+              {{ translateBubble.loading ? '翻译中...' : '翻译' }}
+            </button>
+            <button class="tb-close" @click="hideTranslateBubble">×</button>
+          </div>
+          <div v-if="translateBubble.translation" class="tb-result">
+            <div class="tb-translation">{{ translateBubble.translation }}</div>
+            <div v-if="translateBubble.notes" class="tb-notes">{{ translateBubble.notes }}</div>
+          </div>
+        </div>
         <div class="questions-inner" ref="questionsRef">
           <div
             v-for="question in currentQuestions"
@@ -152,7 +171,19 @@
             <!-- Fill -->
             <template v-else-if="question.type === 'fill'">
               <p class="q-text fill-text" v-html="renderFill(escapeHtml(question.text), question.globalKey)"></p>
-              <div class="fill-input-wrap">
+              <div v-if="question.options?.length" class="mcq-options fill-options">
+                <button
+                  v-for="opt in displayOptions(question.options)"
+                  :key="opt.label"
+                  class="mcq-btn"
+                  :class="{ selected: getAnswer(question.globalKey) === opt.label }"
+                  @click="setAnswer(question.globalKey, opt.label)"
+                >
+                  <span class="opt-label">{{ opt.label }}</span>
+                  <span class="opt-text">{{ opt.text }}</span>
+                </button>
+              </div>
+              <div v-else class="fill-input-wrap">
                 <input
                   class="fill-input"
                   :value="getAnswer(question.globalKey)"
@@ -328,16 +359,16 @@
               <button
                 v-for="c in highlightColors" :key="c.value"
                 class="color-swatch"
-                :class="{ selected: highlightColor === c.value }"
-                :style="{ background: c.value }"
+                :class="{ selected: highlightColor === c.value, eraser: c.value === ERASER_VALUE }"
+                :style="c.value !== ERASER_VALUE ? { background: c.value } : {}"
                 :title="c.name"
                 @click.stop="highlightColor = c.value; showColorPicker = false"
-              />
+              >{{ c.value === ERASER_VALUE ? '🧹' : '' }}</button>
             </div>
           </div>
         </transition>
         <div class="fab-row">
-          <button v-if="highlightMode" class="color-dot-btn" :style="{ background: highlightColor }" @click.stop="showColorPicker = !showColorPicker" title="选择颜色" />
+          <button v-if="highlightMode" class="color-dot-btn" :class="{ eraser: highlightColor === ERASER_VALUE }" :style="highlightColor !== ERASER_VALUE ? { background: highlightColor } : {}" @click.stop="showColorPicker = !showColorPicker" title="选择颜色">{{ highlightColor === ERASER_VALUE ? '🧹' : '' }}</button>
           <button class="fab-toggle hl-toggle" @click.stop="toggleHighlight" :title="highlightMode ? '退出高亮模式' : '划重点'">
             <span class="fab-icon">📌</span>
             <span class="fab-label">{{ highlightMode ? '退出划线' : '划重点' }}</span>
@@ -457,6 +488,7 @@ const currentQId = ref(null)
 const hintQId = ref(null)
 const passageRef = ref(null)
 const questionsRef = ref(null)
+const questionsColRef = ref(null)
 const examBodyRef = ref(null)
 
 let timer = null
@@ -535,9 +567,26 @@ function parseOptionsString(str) {
   const opts = []
   for (const line of lines) {
     const m = line.trim().match(/^([A-Z])[:：]\s*(.+)$/) || line.trim().match(/^([A-Z])\s{2,}(.+)$/)
-    if (m) opts.push({ label: m[1], text: m[2].trim() })
+    if (m) opts.push({ label: m[1], text: normalizeOptionText(m[1], m[2]) })
   }
   return opts.length >= 2 ? opts : null
+}
+
+function normalizeOptionText(label, text) {
+  const raw = String(text || '').trim()
+  const letter = String(label || '').trim()
+  if (!letter) return raw
+  return raw.replace(new RegExp(`^${letter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[.、:：\\s]+`, 'i'), '').trim()
+}
+
+function parseOptionItem(item) {
+  if (typeof item === 'object' && item !== null && item.label) {
+    return { ...item, label: String(item.label), text: normalizeOptionText(item.label, item.text ?? '') }
+  }
+  const raw = String(item || '').trim()
+  const m = raw.match(/^([A-Z]|i{1,3}|iv|v|vi{0,3}|ix|x)(?:[.、:：]|\s+)(.+)$/i)
+  if (m) return { label: m[1], text: normalizeOptionText(m[1], m[2]) }
+  return { label: raw, text: '' }
 }
 
 function typeLabel(type) {
@@ -593,7 +642,7 @@ onMounted(async () => {
               passage = parsed.passages[0] || ''
             } else {
               passage = parsed.passages
-                .map((p, i) => `【Passage ${i + 1}】\n${p || ''}`)
+                .map((p, i) => `${String.fromCharCode(65 + i)} ${p || ''}`)
                 .join('\n\n')
             }
           }
@@ -625,9 +674,7 @@ onMounted(async () => {
                 options = parseOptionsString(raw)
               } else if (Array.isArray(raw)) {
                 options = raw.map(item => {
-                  if (typeof item === 'object' && item !== null && item.label) return item
-                  if (typeof item === 'string') return { label: item, text: item }
-                  return { label: String(item), text: String(item) }
+                  return parseOptionItem(item)
                 })
               } else if (raw && typeof raw === 'object') {
                 // Check if it's write meta (taskType/wordLimit) or actual MCQ options
@@ -647,7 +694,7 @@ onMounted(async () => {
                     options: undefined,
                   }
                 }
-                options = Object.entries(raw).map(([label, text]) => ({ label, text: String(text) }))
+                options = Object.entries(raw).map(([label, text]) => ({ label, text: normalizeOptionText(label, text) }))
               }
             } catch {
               // Fallback: try parsing "A: text\nB: text" format
@@ -713,6 +760,7 @@ onUnmounted(() => {
   disposeWriteCharts()
 
   passageRef.value?.removeEventListener('mouseup', onPassageMouseUp)
+  questionsColRef.value?.removeEventListener('mouseup', onPassageMouseUp)
   document.removeEventListener('mousedown', onDocMouseDownForTranslate)
   translateMode.value = false
 })
@@ -729,12 +777,10 @@ const currentQuestions = computed(() => currentExamData.value?.questions || [])
 // Parse passage into paragraph objects (with marker headers + locator highlight)
 const passageParagraphs = computed(() => {
   const text = currentExamData.value?.passage || ''
-  const qs = currentQuestions.value || []
-  const hintQ = qs.find(q => q.globalKey === hintQId.value)
-  const locator = hintQ?.locatorText?.trim().replace(/\s+/g, ' ') || null
   const MARKER = /^(P\d+\b|【[^】]+】)/
+  const paragraphLabelSet = detectParagraphLabels(text)
 
-  return text.split('\n\n').filter(Boolean).map(para => {
+  return text.split('\n\n').filter(Boolean).flatMap(para => {
     const markerMatch = para.match(MARKER)
     const isHeader = !!markerMatch
     const label = markerMatch ? markerMatch[1] : null
@@ -742,17 +788,67 @@ const passageParagraphs = computed(() => {
       ? (para.includes('\n') ? para.replace(/^[^\n]*\n/, '').trim()
                             : para.replace(/^P\d+\s+\S*\s*/, '').trim())
       : para
-    let html = escapeHtml(bodyText).replace(/\n/g, ' ')
-    if (locator && locator.length > 3) {
-      const escaped = locator.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-      html = html.replace(
-        new RegExp(escaped, 'i'),
-        m => `<mark class="passage-keyword">${m}</mark>`
-      )
+    const parsed = extractParagraphLabel(bodyText, paragraphLabelSet)
+    const html = escapeHtml(parsed.text).replace(/\n/g, ' ')
+    if (isHeader) {
+      return [
+        { html: '', isHeader: true, label, paragraphLabel: '' },
+        ...(html ? [{ html, isHeader: false, label: null, paragraphLabel: parsed.label }] : [])
+      ]
     }
-    return { html, isHeader, label }
+    return [{ html, isHeader: false, label: null, paragraphLabel: parsed.label }]
   })
 })
+
+function detectParagraphLabels(text) {
+  const labels = text.split('\n\n').filter(Boolean)
+    .map(p => String(p || '').trim().match(/^([A-Z])(?:[.)])?\s+/)?.[1])
+    .filter(Boolean)
+  const unique = new Set(labels)
+  return unique.has('A') && unique.has('B') ? unique : new Set()
+}
+
+function extractParagraphLabel(text, labelSet) {
+  const raw = String(text || '').trim()
+  const match = raw.match(/^([A-Z])(?:[.)])?\s+(.+)$/s)
+  if (!match || !labelSet?.has(match[1])) return { label: '', text: raw }
+  return { label: match[1], text: match[2].trim() }
+}
+
+function applyHintLocator() {
+  const passageBody = passageRef.value?.querySelector('.passage-body')
+  if (!passageBody) return
+  passageBody.querySelectorAll('.passage-keyword').forEach(mark => {
+    const parent = mark.parentNode
+    while (mark.firstChild) parent.insertBefore(mark.firstChild, mark)
+    mark.remove()
+    parent.normalize()
+  })
+  const qKey = hintQId.value
+  if (!qKey) return
+  const qs = currentQuestions.value || []
+  const hintQ = qs.find(q => q.globalKey === qKey)
+  const locator = hintQ?.locatorText?.trim().replace(/\s+/g, ' ') || null
+  if (!locator || locator.length <= 3) return
+  const escaped = locator.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const regex = new RegExp(escaped, 'i')
+  const walker = document.createTreeWalker(passageBody, NodeFilter.SHOW_TEXT)
+  let node
+  while ((node = walker.nextNode())) {
+    const match = node.textContent.match(regex)
+    if (!match) continue
+    try {
+      const range = document.createRange()
+      range.setStart(node, match.index)
+      range.setEnd(node, match.index + match[0].length)
+      const mark = document.createElement('mark')
+      mark.className = 'passage-keyword'
+      range.surroundContents(mark)
+      mark.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    } catch { /* boundary issue, skip */ }
+    break
+  }
+}
 
 const currentIsWrite = computed(() => {
   const qs = currentQuestions.value
@@ -1213,21 +1309,17 @@ function toggleHint(question) {
   const qKey = question.globalKey
   if (hintQId.value === qKey) {
     hintQId.value = null
-    return
+  } else {
+    hintQId.value = qKey
   }
-  hintQId.value = qKey
-  if (question.type !== 'write') {
-    nextTick(() => {
-      const hl = passageRef.value?.querySelector('.passage-keyword')
-      if (hl) hl.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    })
-  }
+  nextTick(() => applyHintLocator())
 }
 
 function renderFill(text) {
   const BLANK = `<span class="fill-blank">[    ]</span>`
   const replaced = (text || '').replace(/_{3,}/g, BLANK)
   if (replaced === text) {
+    if (/[.…]{2,}/.test(text)) return text.replace(/\n/g, '<br/>')
     return `${text} ${BLANK}`.replace(/\n/g, '<br/>')
   }
   return replaced.replace(/\n/g, '<br/>')
@@ -1241,11 +1333,19 @@ function toggleMcqCollapse(qKey) {
 }
 
 function visibleOptions(question) {
-  const opts = question.options || []
+  const opts = displayOptions(question.options || [])
   if (!collapsedMcq.value.has(question.globalKey)) return opts
   const ans = getAnswer(question.globalKey)
   if (!ans) return []
   return opts.filter(o => o.label === ans)
+}
+
+function displayOptions(options) {
+  if (!Array.isArray(options) || options.length < 4) return options
+  const letterOptions = options.every(o => /^[A-I]$/i.test(String(o.label || '').trim()))
+  const paragraphOptions = options.filter(o => String(o.text || '').trim().length > 80).length >= Math.ceil(options.length * 0.6)
+  if (!letterOptions || !paragraphOptions) return options
+  return options.map(o => ({ ...o, text: '' }))
 }
 
 // ── word collector ─────────────────────────────────────
@@ -1316,6 +1416,7 @@ function toggleCollect() {
     if (translateMode.value) {
       translateMode.value = false
       passageRef.value?.removeEventListener('mouseup', onPassageMouseUp)
+      questionsColRef.value?.removeEventListener('mouseup', onPassageMouseUp)
       hideTranslateBubble()
     }
     examBodyRef.value?.addEventListener('click', onCollectClick, true)
@@ -1425,6 +1526,7 @@ async function sendAiChat() {
 const translateMode = ref(false)
 const translateBubble = ref({
   show: false,
+  host: 'passage',
   x: 0,
   y: 0,
   selectedText: '',
@@ -1441,7 +1543,7 @@ function onDocMouseDownForTranslate(ev) {
   if (!translateBubble.value.show) return
   const el = ev.target
   if (el?.closest?.('.translate-bubble')) return
-  if (!passageRef.value?.contains(el)) hideTranslateBubble()
+  if (!passageRef.value?.contains(el) && !questionsColRef.value?.contains(el)) hideTranslateBubble()
 }
 
 function onPassageMouseUp(e) {
@@ -1452,12 +1554,23 @@ function onPassageMouseUp(e) {
   if (!sel || sel.isCollapsed || !sel.rangeCount) return
   const text = sel.toString().trim()
   if (!text) return
-  if (!passageRef.value?.contains(sel.anchorNode)) return
+
+  // Determine host container (passage or questions)
+  let hostEl = null
+  let hostName = 'passage'
+  if (passageRef.value?.contains(sel.anchorNode)) {
+    hostEl = passageRef.value
+    hostName = 'passage'
+  } else if (questionsColRef.value?.contains(sel.anchorNode)) {
+    hostEl = questionsColRef.value
+    hostName = 'questions'
+  }
+  if (!hostEl) return
 
   const range = sel.getRangeAt(0)
   const rect = range.getBoundingClientRect()
-  const hostRect = passageRef.value.getBoundingClientRect()
-  const scrollTop = passageRef.value?.scrollTop || 0
+  const hostRect = hostEl.getBoundingClientRect()
+  const scrollTop = hostEl.scrollTop || 0
 
   const x = Math.min(Math.max(rect.left - hostRect.left, 8), hostRect.width - 120)
   const y = Math.max(rect.bottom - hostRect.top + scrollTop + 6, 8)
@@ -1465,6 +1578,7 @@ function onPassageMouseUp(e) {
   translateBubble.value = {
     ...translateBubble.value,
     show: true,
+    host: hostName,
     x,
     y,
     selectedText: text,
@@ -1507,9 +1621,11 @@ function toggleTranslate() {
       examBodyRef.value?.removeEventListener('click', onCollectClick, true)
     }
     passageRef.value?.addEventListener('mouseup', onPassageMouseUp)
-    ElMessage.info({ message: '翻译模式已开启：选中文章中的句子/短语后点击翻译', duration: 2500 })
+    questionsColRef.value?.addEventListener('mouseup', onPassageMouseUp)
+    ElMessage.info({ message: '翻译模式已开启：选中文章或题目中的句子/短语后点击翻译', duration: 2500 })
   } else {
     passageRef.value?.removeEventListener('mouseup', onPassageMouseUp)
+    questionsColRef.value?.removeEventListener('mouseup', onPassageMouseUp)
     hideTranslateBubble()
   }
 }
@@ -1518,6 +1634,7 @@ function toggleTranslate() {
 const highlightMode = ref(false)
 const highlightColor = ref('rgba(166,110,60,0.32)')
 const showColorPicker = ref(false)
+const ERASER_VALUE = '__eraser__'
 const highlightColors = [
   { name: '棕色（默认）', value: 'rgba(166,110,60,0.32)' },
   { name: '黄色', value: 'rgba(250,204,21,0.45)' },
@@ -1525,20 +1642,31 @@ const highlightColors = [
   { name: '蓝色', value: 'rgba(96,165,250,0.40)' },
   { name: '粉色', value: 'rgba(244,114,182,0.40)' },
   { name: '橙色', value: 'rgba(251,146,60,0.40)' },
+  { name: '橡皮擦', value: ERASER_VALUE },
 ]
 
-function createHighlightSpan() {
-  const span = document.createElement('span')
-  span.className = 'text-highlight'
-  span.style.backgroundColor = highlightColor.value
-  span.title = '点击可移除高亮'
+function makeHighlightClickHandler(span) {
   span.addEventListener('click', (ev) => {
+    if (!highlightMode.value) return
     ev.stopPropagation()
     const parent = span.parentNode
     if (!parent) return
     while (span.firstChild) parent.insertBefore(span.firstChild, span)
     parent.removeChild(span)
-  }, { once: true })
+    parent.normalize()
+  })
+}
+
+function createHighlightSpan() {
+  return createHighlightSpanWithColor(highlightColor.value)
+}
+
+function createHighlightSpanWithColor(color) {
+  const span = document.createElement('span')
+  span.className = 'text-highlight'
+  span.style.backgroundColor = color
+  span.title = '点击可移除高亮'
+  makeHighlightClickHandler(span)
   return span
 }
 
@@ -1560,6 +1688,19 @@ function getTextNodesInRange(range) {
   return results
 }
 
+function eraseHighlightsInRange(range) {
+  const container = range.commonAncestorContainer
+  const root = container.nodeType === Node.TEXT_NODE ? container.parentElement : container
+  const hlSpans = Array.from((root || document).querySelectorAll('.text-highlight')).filter(s => range.intersectsNode(s))
+  for (const span of hlSpans) {
+    const parent = span.parentNode
+    if (!parent) continue
+    while (span.firstChild) parent.insertBefore(span.firstChild, span)
+    parent.removeChild(span)
+    parent.normalize()
+  }
+}
+
 function onHighlightMouseUp(e) {
   const sel = window.getSelection()
   if (!sel || sel.isCollapsed || !sel.rangeCount) return
@@ -1568,12 +1709,29 @@ function onHighlightMouseUp(e) {
   if (e.target.closest?.('.exam-fabs')) return
   try {
     const range = sel.getRangeAt(0)
+    // Eraser mode: remove highlights in selection
+    if (highlightColor.value === ERASER_VALUE) {
+      eraseHighlightsInRange(range)
+      sel.removeAllRanges()
+      return
+    }
+    // Check if selection is entirely inside an existing highlight
+    const startEl = range.startContainer.nodeType === Node.TEXT_NODE
+      ? range.startContainer.parentElement : range.startContainer
+    const existingHL = startEl?.closest?.('.text-highlight')
+    if (existingHL && existingHL.contains(range.endContainer)) {
+      splitAndHighlight(range, existingHL)
+      sel.removeAllRanges()
+      return
+    }
+    // Simple case: selection within one element, not inside existing highlight
     try {
       const span = createHighlightSpan()
       range.surroundContents(span)
       sel.removeAllRanges()
       return
     } catch { /* crosses element boundary, fall through */ }
+    // Cross-element: wrap each text node individually
     const textNodes = getTextNodesInRange(range)
     for (const info of textNodes) {
       const subRange = document.createRange()
@@ -1584,8 +1742,57 @@ function onHighlightMouseUp(e) {
     }
     sel.removeAllRanges()
   } catch {
-    sel.removeAllRanges()
+    sel?.removeAllRanges()
   }
+}
+
+function splitAndHighlight(range, existingHL) {
+  const textNode = range.startContainer
+  if (textNode.nodeType !== Node.TEXT_NODE || textNode.parentNode !== existingHL
+      || range.startContainer !== range.endContainer) {
+    try {
+      const span = createHighlightSpan()
+      range.surroundContents(span)
+    } catch {
+      const textNodes = getTextNodesInRange(range)
+      for (const info of textNodes) {
+        const subRange = document.createRange()
+        subRange.setStart(info.node, info.start)
+        subRange.setEnd(info.node, info.end)
+        const s = createHighlightSpan()
+        subRange.surroundContents(s)
+      }
+    }
+    return
+  }
+  const oldColor = existingHL.style.backgroundColor
+  const parent = existingHL.parentNode
+  if (!parent) return
+  const fullText = textNode.textContent
+  const beforeText = fullText.substring(0, range.startOffset)
+  const selText = fullText.substring(range.startOffset, range.endOffset)
+  const afterText = fullText.substring(range.endOffset)
+  const childNodes = Array.from(existingHL.childNodes)
+  const idx = childNodes.indexOf(textNode)
+  const frag = document.createDocumentFragment()
+  const beforeChildren = childNodes.slice(0, idx)
+  if (beforeChildren.length || beforeText) {
+    const span = createHighlightSpanWithColor(oldColor)
+    beforeChildren.forEach(c => span.appendChild(c.cloneNode(true)))
+    if (beforeText) span.appendChild(document.createTextNode(beforeText))
+    frag.appendChild(span)
+  }
+  const newSpan = createHighlightSpan()
+  newSpan.textContent = selText
+  frag.appendChild(newSpan)
+  const afterChildren = childNodes.slice(idx + 1)
+  if (afterText || afterChildren.length) {
+    const span = createHighlightSpanWithColor(oldColor)
+    if (afterText) span.appendChild(document.createTextNode(afterText))
+    afterChildren.forEach(c => span.appendChild(c.cloneNode(true)))
+    frag.appendChild(span)
+  }
+  parent.replaceChild(frag, existingHL)
 }
 
 function toggleHighlight() {
@@ -1595,6 +1802,7 @@ function toggleHighlight() {
     if (translateMode.value) {
       translateMode.value = false
       passageRef.value?.removeEventListener('mouseup', onPassageMouseUp)
+      questionsColRef.value?.removeEventListener('mouseup', onPassageMouseUp)
       hideTranslateBubble()
     }
     if (collectMode.value) {
@@ -1699,6 +1907,8 @@ async function doSubmit() {
         for (const q of (r.questions || [])) {
           mergedQuestions.push({
             id: String(q.id),
+            examId: r.examId,
+            examTitle: r.title,
             type: q.type,
             questionNumber: q.questionNumber,
             text: q.questionText || q.text || '',
@@ -1715,12 +1925,12 @@ async function doSubmit() {
 
       // Collect passages from all submitted exams for ResultView display
       const collectionPassages = []
-      for (const r of allResults) {
-        const data = examDataMap.value[r.examId]
+      for (const item of examItems.value) {
+        const data = examDataMap.value[item.examId]
         if (data?.passage) {
           collectionPassages.push({
-            examId: r.examId,
-            title: r.title || data.title,
+            examId: item.examId,
+            title: item.examTitle || data.title,
             passage: data.passage,
           })
         }
@@ -1893,6 +2103,21 @@ async function doSubmit() {
 .ctrl-btn { width: 28px; height: 28px; border-radius: var(--radius-md); border: 1px solid var(--border-color); background: var(--bg-white); cursor: pointer; font-size: 12px; font-weight: 600; }
 .passage-body { line-height: 1.8; color: var(--text-secondary); }
 .passage-para { margin-bottom: 12px; text-indent: 0; }
+.passage-para.labeled-para {
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  column-gap: 6px;
+  align-items: start;
+}
+.passage-letter {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--text-primary);
+  line-height: 1.8;
+  text-align: center;
+}
+.passage-text { min-width: 0; }
 
 .passage-divider {
   border: none;
@@ -1921,7 +2146,7 @@ async function doSubmit() {
   transition: background 0.2s;
 }
 
-.questions-col { flex: 1; overflow-y: auto; padding: 24px; background: var(--bg-primary); }
+.questions-col { flex: 1; overflow-y: auto; padding: 24px; background: var(--bg-primary); position: relative; }
 .questions-inner { display: flex; flex-direction: column; gap: 16px; }
 
 /* ── Question blocks ─────────────────────────────────────────────────── */
@@ -1976,8 +2201,30 @@ async function doSubmit() {
 }
 .mcq-btn:hover { border-color: var(--color-primary); }
 .mcq-btn.selected { background: var(--color-primary); color: white; border-color: var(--color-primary); }
-.opt-label { font-weight: 700; flex-shrink: 0; }
-.opt-text { font-size: 13px; line-height: 1.5; }
+.opt-label {
+  min-width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--bg-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  flex: 0 0 auto;
+  padding: 0 6px;
+}
+.mcq-btn.selected .opt-label {
+  background: rgba(255,255,255,0.2);
+  color: white;
+}
+.opt-text {
+  font-size: 13px;
+  line-height: 1.5;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 
 .fill-input-wrap { margin-top: 6px; }
 .fill-input {
@@ -2415,6 +2662,20 @@ async function doSubmit() {
 }
 .color-swatch:hover { transform: scale(1.2); }
 .color-swatch.selected { border-color: #1B4332; transform: scale(1.15); }
+.color-swatch.eraser {
+  background: #f5f5f5;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.color-dot-btn.eraser {
+  background: #f5f5f5 !important;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
 
 /* ── Loading ─────────────────────────────────────────────────────────── */
 .loading-state { text-align: center; padding: 80px 0; display: flex; flex-direction: column; align-items: center; gap: 16px; color: var(--text-muted); font-size: 14px; }

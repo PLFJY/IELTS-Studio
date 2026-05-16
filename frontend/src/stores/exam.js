@@ -51,9 +51,26 @@ function parseOptionsString(str) {
   const opts = []
   for (const line of lines) {
     const m = line.trim().match(/^([A-Z])[:：]\s*(.+)$/) || line.trim().match(/^([A-Z])\s{2,}(.+)$/)
-    if (m) opts.push({ label: m[1], text: m[2].trim() })
+    if (m) opts.push({ label: m[1], text: normalizeOptionText(m[1], m[2]) })
   }
   return opts.length >= 2 ? opts : null
+}
+
+function normalizeOptionText(label, text) {
+  const raw = String(text || '').trim()
+  const letter = String(label || '').trim()
+  if (!letter) return raw
+  return raw.replace(new RegExp(`^${letter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[.、:：\\s]+`, 'i'), '').trim()
+}
+
+function parseOptionItem(item) {
+  if (typeof item === 'object' && item !== null && item.label) {
+    return { ...item, label: String(item.label), text: normalizeOptionText(item.label, item.text ?? '') }
+  }
+  const raw = String(item || '').trim()
+  const m = raw.match(/^([A-Z]|i{1,3}|iv|v|vi{0,3}|ix|x)(?:[.、:：]|\s+)(.+)$/i)
+  if (m) return { label: m[1], text: normalizeOptionText(m[1], m[2]) }
+  return { label: raw, text: '' }
 }
 
 function normalizeText(text) {
@@ -602,7 +619,7 @@ export const useExamStore = defineStore('exam', () => {
           passage = parsed.passages[0] || ''
         } else {
           passage = parsed.passages
-            .map((p, i) => `【Passage ${i + 1}】\n${p || ''}`)
+            .map((p, i) => `${String.fromCharCode(65 + i)} ${p || ''}`)
             .join('\n\n')
         }
       } else {
@@ -655,12 +672,10 @@ export const useExamStore = defineStore('exam', () => {
             } else if (Array.isArray(raw)) {
               // Array of {label, text} objects → use as-is; array of strings → convert
               options = raw.map(item => {
-                if (typeof item === 'object' && item !== null && item.label) return item
-                if (typeof item === 'string') return { label: item, text: item }
-                return { label: String(item), text: String(item) }
+                return parseOptionItem(item)
               })
             } else if (raw && typeof raw === 'object') {
-              options = Object.entries(raw).map(([label, text]) => ({ label, text: String(text) }))
+              options = Object.entries(raw).map(([label, text]) => ({ label, text: normalizeOptionText(label, text) }))
             }
           } catch {
             // Fallback: try parsing "A: text\nB: text" format
@@ -750,8 +765,9 @@ export const useExamStore = defineStore('exam', () => {
     const token = localStorage.getItem('ielts_token') || ''
     if (!token || token.startsWith('mock_token_')) return
     try {
-      const res = await request.get('/exams')
-      const serverExams = res.data || []
+      const res = await request.get('/exams', { params: { page: 1, size: 999 } })
+      const resData = res.data || {}
+      const serverExams = resData.records || resData || []
       // Build real exam list
       const mapped = serverExams.map(e => ({
         id: e.id,

@@ -96,6 +96,22 @@
               </span>
             </div>
             <div class="passage-content" ref="passageRef">
+              <div
+                v-if="translateBubble.show && translateBubble.host === 'passage'"
+                class="translate-bubble"
+                :style="{ left: translateBubble.x + 'px', top: translateBubble.y + 'px' }"
+              >
+                <div class="tb-actions">
+                  <button class="tb-btn" :disabled="translateBubble.loading" @click="doTranslate">
+                    {{ translateBubble.loading ? '翻译中...' : '翻译' }}
+                  </button>
+                  <button class="tb-close" @click="hideTranslateBubble">×</button>
+                </div>
+                <div v-if="translateBubble.translation" class="tb-result">
+                  <div class="tb-translation">{{ translateBubble.translation }}</div>
+                  <div v-if="translateBubble.notes" class="tb-notes">{{ translateBubble.notes }}</div>
+                </div>
+              </div>
               <!-- Visual Data Panel (charts + tables) -->
               <div v-if="passageVisual.hasVisual" class="result-visual-panel">
                 <div class="rvp-header">
@@ -124,13 +140,32 @@
                     <span class="result-passage-section-badge">{{ para.label }}</span>
                   </div>
                 </template>
-                <p class="result-para" v-html="para.html"></p>
+                <p v-else :class="['result-para', { 'labeled-para': para.paragraphLabel }]">
+                  <span v-if="para.paragraphLabel" class="passage-letter">{{ para.paragraphLabel }}</span>
+                  <span class="passage-text" v-html="para.html"></span>
+                </p>
               </template>
             </div>
           </div>
 
           <!-- Question Review -->
-          <div class="result-questions">
+          <div class="result-questions" ref="questionsColRef">
+            <div
+              v-if="translateBubble.show && translateBubble.host === 'questions'"
+              class="translate-bubble"
+              :style="{ left: translateBubble.x + 'px', top: translateBubble.y + 'px' }"
+            >
+              <div class="tb-actions">
+                <button class="tb-btn" :disabled="translateBubble.loading" @click="doTranslate">
+                  {{ translateBubble.loading ? '翻译中...' : '翻译' }}
+                </button>
+                <button class="tb-close" @click="hideTranslateBubble">×</button>
+              </div>
+              <div v-if="translateBubble.translation" class="tb-result">
+                <div class="tb-translation">{{ translateBubble.translation }}</div>
+                <div v-if="translateBubble.notes" class="tb-notes">{{ translateBubble.notes }}</div>
+              </div>
+            </div>
             <div class="questions-review-header">
               <h3>答题详情</h3>
               <div class="review-tabs">
@@ -247,7 +282,23 @@
         </div>
 
         <!-- All Questions (compact) when passage hidden -->
-        <div v-else class="questions-compact card">
+        <div v-else class="questions-compact card" ref="compactQuestionsRef">
+          <div
+            v-if="translateBubble.show && translateBubble.host === 'compact'"
+            class="translate-bubble"
+            :style="{ left: translateBubble.x + 'px', top: translateBubble.y + 'px' }"
+          >
+            <div class="tb-actions">
+              <button class="tb-btn" :disabled="translateBubble.loading" @click="doTranslate">
+                {{ translateBubble.loading ? '翻译中...' : '翻译' }}
+              </button>
+              <button class="tb-close" @click="hideTranslateBubble">×</button>
+            </div>
+            <div v-if="translateBubble.translation" class="tb-result">
+              <div class="tb-translation">{{ translateBubble.translation }}</div>
+              <div v-if="translateBubble.notes" class="tb-notes">{{ translateBubble.notes }}</div>
+            </div>
+          </div>
           <div class="compact-header">
             <h3>答题详情</h3>
             <div class="review-tabs">
@@ -352,6 +403,77 @@
 
       </div>
     </div>
+
+    <!-- FAB Group -->
+    <div class="result-fabs">
+      <button class="fab-minimize-btn" @click.stop="showFabs = !showFabs" :title="showFabs ? '隐藏工具栏' : '显示工具栏'">
+        {{ showFabs ? '✕' : '🛠️' }}
+      </button>
+      <template v-if="showFabs">
+        <!-- Translate FAB -->
+        <div class="translate-fab" :class="{ active: translateMode }">
+          <div class="fab-row">
+            <button class="fab-toggle tl-toggle" @click.stop="toggleTranslate" :title="translateMode ? '退出翻译模式' : '翻译'">
+              <span class="fab-icon">🌐</span>
+              <span class="fab-label">{{ translateMode ? '退出翻译' : '翻译' }}</span>
+            </button>
+          </div>
+        </div>
+        <!-- AI Assistant FAB -->
+        <div class="ai-assistant-fab">
+          <transition name="collector-expand">
+            <div v-if="aiChatOpen" class="ai-chat-panel" ref="aiPanelRef"
+              :class="{ 'ai-maximized': aiMaximized }"
+              :style="!aiMaximized ? { left: aiPos.x + 'px', top: aiPos.y + 'px', width: aiSize.w + 'px', height: aiSize.h + 'px' } : {}">
+              <div class="ai-chat-header" @mousedown.prevent="startDrag">
+                <span>🤖 AI 助手</span>
+                <div class="ai-header-actions">
+                  <button class="ai-chat-btn" @click.stop="aiMaximized = !aiMaximized" :title="aiMaximized ? '还原' : '放大'">
+                    <svg v-if="!aiMaximized" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+                    <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="5" y="7" width="14" height="14" rx="1"/><path d="M9 7V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2"/></svg>
+                  </button>
+                  <button class="ai-chat-btn" @click.stop="aiChatOpen = false">×</button>
+                </div>
+              </div>
+              <div v-if="result?.isCollection && aiContextOptions.length" class="ai-context-selector">
+                <span class="ai-context-label">上下文</span>
+                <select v-model="aiContextExamId" :disabled="aiLoading">
+                  <option value="all">全部试卷</option>
+                  <option v-for="opt in aiContextOptions" :key="opt.value" :value="opt.value">
+                    {{ opt.label }}
+                  </option>
+                </select>
+              </div>
+              <div class="ai-chat-messages" ref="aiChatMessagesRef">
+                <div v-if="aiMessages.length === 0" class="ai-chat-empty">
+                  <p>你好！我是 AI 助手，可以回答关于本试卷的问题。</p>
+                  <p class="ai-chat-hint">例如：第3题为什么选A？/ 这段话的主旨是什么？</p>
+                </div>
+                <div v-for="(msg, idx) in aiMessages" :key="idx" :class="['ai-msg', msg.role]">
+                  <div class="ai-msg-bubble" v-html="msg.role === 'assistant' ? renderMd(msg.content) : escapeHtml(msg.content)"></div>
+                </div>
+                <div v-if="aiLoading" class="ai-msg assistant">
+                  <div class="ai-msg-bubble ai-typing">
+                    <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+                  </div>
+                </div>
+              </div>
+              <div class="ai-chat-input">
+                <input v-model="aiQuestion" placeholder="输入问题..." @keyup.enter="sendAiChat" :disabled="aiLoading" />
+                <button @click="sendAiChat" :disabled="aiLoading || !aiQuestion.trim()">发送</button>
+              </div>
+              <div class="ai-resize-handle" @mousedown.prevent="startResize"></div>
+            </div>
+          </transition>
+          <div class="fab-row">
+            <button class="fab-toggle ai-toggle" @click.stop="aiChatOpen = !aiChatOpen" title="AI 助手">
+              <span class="fab-icon">🤖</span>
+              <span class="fab-label">{{ aiChatOpen ? '关闭助手' : 'AI 助手' }}</span>
+            </button>
+          </div>
+        </div>
+      </template>
+    </div>
   </div>
   <div v-else class="no-result">
     <p>暂无考试结果</p>
@@ -360,11 +482,14 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useExamStore } from '@/stores/exam'
 import NavBar from '@/components/NavBar.vue'
 import * as echarts from 'echarts'
+import { translateApi } from '@/api/translate'
+import request from '@/api/index'
+import { ElMessage } from 'element-plus'
 
 const route = useRoute()
 const router = useRouter()
@@ -385,6 +510,9 @@ const correctRate = computed(() => {
 const showPassage = ref(false)
 const reviewTab = ref('all')
 const passageRef = ref()
+const questionsColRef = ref()
+const compactQuestionsRef = ref()
+const showFabs = ref(true)
 const writeBarChartRef = ref(null)
 const writePieChartRef = ref(null)
 let writeBarChart = null
@@ -406,17 +534,39 @@ const filteredQuestions = computed(() => {
 const PASSAGE_MARKER = /^(P\d+\b|【[^】]+】)/
 
 const rawPassageText = computed(() => {
-  const section = examStore.currentExam?.sections?.[0]
-  if (section?.passage) return section.passage
   if (result.value?.passages?.length) {
     return result.value.passages.map(p => `【${p.title}】\n${p.passage}`).join('\n\n')
   }
+  const section = examStore.currentExam?.sections?.[0]
+  if (section?.passage) return section.passage
   return ''
 })
 
 const passageVisual = computed(() => buildWriteVisual(rawPassageText.value))
 
 const passageParagraphs = computed(() => {
+  if (result.value?.isCollection && result.value?.passages?.length) {
+    const paragraphs = []
+    result.value.passages.forEach((p, passageIdx) => {
+      paragraphs.push({
+        html: '',
+        isHeader: true,
+        label: p.title || `试卷 ${passageIdx + 1}`,
+      })
+      const raw = passageVisual.value?.hasVisual ? stripVisualBlocks(p.passage || '') : (p.passage || '')
+      raw.split('\n\n').filter(Boolean).forEach(para => {
+        const parsed = extractParagraphLabel(para)
+        const normalised = parsed.text.replace(/\n/g, ' ')
+        paragraphs.push({
+          html: highlightPassage(normalised, p.examId),
+          isHeader: false,
+          label: null,
+          paragraphLabel: parsed.label,
+        })
+      })
+    })
+    return paragraphs
+  }
   if (!rawPassageText.value) return []
   const cleaned = passageVisual.value?.hasVisual ? stripVisualBlocks(rawPassageText.value) : rawPassageText.value
   return cleaned.split('\n\n').filter(Boolean).map((para, idx) => {
@@ -428,11 +578,19 @@ const passageParagraphs = computed(() => {
       ? (para.includes('\n') ? para.replace(/^[^\n]*\n/, '').trim()
                               : para.replace(/^P\d+\s+\S*\s*/, '').trim())
       : para
+    const parsed = extractParagraphLabel(bodyText)
     // Normalise single newlines to spaces, then highlight
-    const normalised = bodyText.replace(/\n/g, ' ')
-    return { html: highlightPassage(normalised), isHeader, label }
+    const normalised = parsed.text.replace(/\n/g, ' ')
+    return { html: highlightPassage(normalised), isHeader, label, paragraphLabel: parsed.label }
   })
 })
+
+function extractParagraphLabel(text) {
+  const raw = String(text || '').trim()
+  const match = raw.match(/^([A-Z])(?:[.)])?\s+(.+)$/s)
+  if (!match) return { label: '', text: raw }
+  return { label: match[1], text: match[2].trim() }
+}
 
 function getTabCnt(tab) {
   if (!result.value) return 0
@@ -453,14 +611,17 @@ function getScoreClass(rate) {
   return 'low'
 }
 
-function highlightPassage(rawText) {
+function highlightPassage(rawText, examId = null) {
   if (!rawText) return ''
   // HTML-escape first so injected marks are safe
   let html = escapeHtml(rawText)
   if (!result.value) return html
 
-  const wrongQuestions = result.value.questions.filter(q => !q.isCorrect && q.locatorText)
-  const correctQuestions = result.value.questions.filter(q => q.isCorrect && q.locatorText)
+  const sourceQuestions = examId == null
+    ? result.value.questions
+    : result.value.questions.filter(q => !q.examId || String(q.examId) === String(examId))
+  const wrongQuestions = sourceQuestions.filter(q => !q.isCorrect && q.locatorText)
+  const correctQuestions = sourceQuestions.filter(q => q.isCorrect && q.locatorText)
 
   function applyMark(text, locator, cls) {
     // Normalise locator whitespace to match the \n→space processed HTML
@@ -671,9 +832,272 @@ watch(
   { immediate: true }
 )
 
-onBeforeUnmount(() => { disposeWriteCharts() })
+// ── Translate overlay ──────────────────────────────────────
+const translateMode = ref(false)
+const translateBubble = ref({
+  show: false,
+  host: 'passage',
+  x: 0, y: 0,
+  selectedText: '',
+  loading: false,
+  translation: '',
+  notes: '',
+})
+
+function hideTranslateBubble() {
+  translateBubble.value = { ...translateBubble.value, show: false, loading: false }
+}
+
+function onDocMouseDownForTranslate(ev) {
+  if (!translateBubble.value.show) return
+  const el = ev.target
+  if (el?.closest?.('.translate-bubble')) return
+  if (!passageRef.value?.contains(el) && !questionsColRef.value?.contains(el) && !compactQuestionsRef.value?.contains(el)) hideTranslateBubble()
+}
+
+function onTranslateMouseUp() {
+  if (!translateMode.value) return
+  const sel = window.getSelection()
+  if (!sel || sel.isCollapsed || !sel.rangeCount) return
+  const text = sel.toString().trim()
+  if (!text) return
+
+  let hostEl = null
+  let hostName = 'passage'
+  if (passageRef.value?.contains(sel.anchorNode)) {
+    hostEl = passageRef.value
+    hostName = 'passage'
+  } else if (questionsColRef.value?.contains(sel.anchorNode)) {
+    hostEl = questionsColRef.value
+    hostName = 'questions'
+  } else if (compactQuestionsRef.value?.contains(sel.anchorNode)) {
+    hostEl = compactQuestionsRef.value
+    hostName = 'compact'
+  }
+  if (!hostEl) return
+
+  const range = sel.getRangeAt(0)
+  const rect = range.getBoundingClientRect()
+  const hostRect = hostEl.getBoundingClientRect()
+  const scrollTop = hostEl.scrollTop || 0
+
+  const x = Math.min(Math.max(rect.left - hostRect.left, 8), hostRect.width - 120)
+  const y = Math.max(rect.bottom - hostRect.top + scrollTop + 6, 8)
+
+  translateBubble.value = {
+    ...translateBubble.value,
+    show: true,
+    host: hostName,
+    x, y,
+    selectedText: text,
+    loading: false,
+    translation: '',
+    notes: '',
+  }
+}
+
+async function doTranslate() {
+  const selText = translateBubble.value.selectedText
+  if (!selText) return
+  const passageText = rawPassageText.value || ''
+  translateBubble.value = { ...translateBubble.value, loading: true, translation: '', notes: '' }
+  try {
+    const res = await translateApi.translate(passageText, selText)
+    translateBubble.value = {
+      ...translateBubble.value,
+      loading: false,
+      translation: res?.translation || '',
+      notes: res?.notes || '',
+    }
+  } catch (e) {
+    console.error('[doTranslate] error:', e)
+    translateBubble.value = { ...translateBubble.value, loading: false }
+    ElMessage.error(e?.message || '翻译失败，请重试')
+  }
+}
+
+function toggleTranslate() {
+  translateMode.value = !translateMode.value
+  if (translateMode.value) {
+    passageRef.value?.addEventListener('mouseup', onTranslateMouseUp)
+    questionsColRef.value?.addEventListener('mouseup', onTranslateMouseUp)
+    compactQuestionsRef.value?.addEventListener('mouseup', onTranslateMouseUp)
+    ElMessage.info({ message: '翻译模式已开启：选中文章或题目中的句子/短语后点击翻译', duration: 2500 })
+  } else {
+    passageRef.value?.removeEventListener('mouseup', onTranslateMouseUp)
+    questionsColRef.value?.removeEventListener('mouseup', onTranslateMouseUp)
+    compactQuestionsRef.value?.removeEventListener('mouseup', onTranslateMouseUp)
+    hideTranslateBubble()
+  }
+}
+
+// ── AI Assistant ──────────────────────────────────────
+const aiChatOpen = ref(false)
+const aiMessages = ref([])
+const aiQuestion = ref('')
+const aiLoading = ref(false)
+const aiChatMessagesRef = ref()
+const aiPanelRef = ref(null)
+const aiMaximized = ref(false)
+const aiContextExamId = ref('all')
+const aiPos = reactive({ x: Math.max(window.innerWidth - 420, 20), y: 80 })
+const aiSize = reactive({ w: 400, h: 520 })
+
+const aiContextOptions = computed(() => {
+  if (!result.value?.isCollection || !result.value?.passages?.length) return []
+  return result.value.passages.map((p, idx) => ({
+    value: String(p.examId || idx),
+    label: `试卷 ${idx + 1}${p.title ? `：${p.title}` : ''}`,
+    passage: p,
+  }))
+})
+
+watch(aiContextOptions, (opts) => {
+  if (opts.length && (aiContextExamId.value === 'all' || !opts.some(o => o.value === aiContextExamId.value))) {
+    aiContextExamId.value = opts[0].value
+  }
+}, { immediate: true })
+
+function startDrag(e) {
+  if (aiMaximized.value) return
+  const startX = e.clientX - aiPos.x
+  const startY = e.clientY - aiPos.y
+  function onMove(ev) {
+    aiPos.x = Math.max(0, ev.clientX - startX)
+    aiPos.y = Math.max(0, ev.clientY - startY)
+  }
+  function onUp() {
+    document.removeEventListener('mousemove', onMove)
+    document.removeEventListener('mouseup', onUp)
+  }
+  document.addEventListener('mousemove', onMove)
+  document.addEventListener('mouseup', onUp)
+}
+
+function startResize(e) {
+  const startX = e.clientX
+  const startY = e.clientY
+  const startW = aiSize.w
+  const startH = aiSize.h
+  function onMove(ev) {
+    aiSize.w = Math.max(300, startW + ev.clientX - startX)
+    aiSize.h = Math.max(300, startH + ev.clientY - startY)
+  }
+  function onUp() {
+    document.removeEventListener('mousemove', onMove)
+    document.removeEventListener('mouseup', onUp)
+  }
+  document.addEventListener('mousemove', onMove)
+  document.addEventListener('mouseup', onUp)
+}
+
+function buildExamContext() {
+  if (!result.value) return ''
+  const formatQuestion = q =>
+    `Q${q.questionNumber} [${q.type || ''}]: ${q.text}${q.answer ? ' (正确答案: ' + q.answer + ')' : ''}${q.userAnswer ? ' (用户答案: ' + q.userAnswer + ')' : ''}`
+
+  if (result.value.isCollection && result.value.passages?.length) {
+    const questions = result.value.questions || []
+    const selectedPassages = aiContextExamId.value === 'all'
+      ? result.value.passages
+      : result.value.passages.filter((p, idx) => String(p.examId || idx) === String(aiContextExamId.value))
+    const sections = selectedPassages.map((p, idx) => {
+      const related = questions.filter(q => String(q.examId || '') === String(p.examId || ''))
+      return `【试卷 ${idx + 1}：${p.title || ''}】\n【文章】\n${p.passage || ''}\n\n【题目与答案】\n${related.map(formatQuestion).join('\n') || '（该试卷题目缺少 examId 关联，见下方汇总题目）'}`
+    }).join('\n\n')
+    const ungrouped = aiContextExamId.value === 'all' ? questions.filter(q => !q.examId) : []
+    const ungroupedText = ungrouped.length
+      ? `\n\n【未分组题目汇总】\n${ungrouped.map(formatQuestion).join('\n')}`
+      : ''
+    const scope = aiContextExamId.value === 'all' ? '全部试卷' : '当前选择试卷'
+    return `【试卷集：${result.value.examTitle || ''}｜上下文范围：${scope}】\n${sections}${ungroupedText}`
+  }
+
+  const passageText = rawPassageText.value || ''
+  const questions = (result.value.questions || []).map(formatQuestion).join('\n')
+  return `【文章】\n${passageText}\n\n【题目与答案】\n${questions}`
+}
+
+async function sendAiChat() {
+  const q = aiQuestion.value.trim()
+  if (!q || aiLoading.value) return
+  aiMessages.value.push({ role: 'user', content: q })
+  aiQuestion.value = ''
+  aiLoading.value = true
+  await nextTick()
+  if (aiChatMessagesRef.value) {
+    aiChatMessagesRef.value.scrollTop = aiChatMessagesRef.value.scrollHeight
+  }
+  try {
+    const res = await request.post('/exams/ai-chat', {
+      examContext: buildExamContext(),
+      question: q
+    }, { timeout: 60000 })
+    if (res && res.code === 200 && res.data?.answer) {
+      aiMessages.value.push({ role: 'assistant', content: res.data.answer })
+    } else {
+      aiMessages.value.push({ role: 'assistant', content: res?.message || 'AI 回答失败，请重试' })
+    }
+  } catch (e) {
+    aiMessages.value.push({ role: 'assistant', content: '请求失败: ' + (e?.message || '网络错误') })
+  } finally {
+    aiLoading.value = false
+    await nextTick()
+    if (aiChatMessagesRef.value) {
+      aiChatMessagesRef.value.scrollTop = aiChatMessagesRef.value.scrollHeight
+    }
+  }
+}
+
+function renderMd(text) {
+  if (!text) return ''
+  let html = escapeHtml(text)
+  html = html.replace(/```[\s\S]*?```/g, m => {
+    const inner = m.slice(3, -3).replace(/^\w*\n/, '')
+    return `<pre class="md-code-block">${inner}</pre>`
+  })
+  html = html.replace(/`([^`]+)`/g, '<code class="md-code">$1</code>')
+  html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>')
+  const lines = html.split('\n')
+  const parts = []
+  let inList = false
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (/^#{1,3}\s/.test(trimmed)) {
+      if (inList) { parts.push('</ul>'); inList = false }
+      const level = trimmed.match(/^(#+)/)[1].length
+      parts.push(`<h${level + 2} class="md-h">${trimmed.replace(/^#+\s*/, '')}</h${level + 2}>`)
+    } else if (/^&gt;\s/.test(trimmed)) {
+      if (inList) { parts.push('</ul>'); inList = false }
+      parts.push(`<blockquote class="md-quote">${trimmed.replace(/^&gt;\s*/, '')}</blockquote>`)
+    } else if (/^[-*]\s/.test(trimmed)) {
+      if (!inList) { parts.push('<ul class="md-list">'); inList = true }
+      parts.push(`<li>${trimmed.replace(/^[-*]\s*/, '')}</li>`)
+    } else if (/^\d+\.\s/.test(trimmed)) {
+      if (!inList) { parts.push('<ol class="md-list">'); inList = true }
+      parts.push(`<li>${trimmed.replace(/^\d+\.\s*/, '')}</li>`)
+    } else {
+      if (inList) { parts.push('</ul>'); inList = false }
+      if (trimmed) parts.push(`<p class="md-p">${trimmed}</p>`)
+      else parts.push('<br/>')
+    }
+  }
+  if (inList) parts.push('</ul>')
+  return parts.join('')
+}
+
+onBeforeUnmount(() => {
+  disposeWriteCharts()
+  passageRef.value?.removeEventListener('mouseup', onTranslateMouseUp)
+  questionsColRef.value?.removeEventListener('mouseup', onTranslateMouseUp)
+  compactQuestionsRef.value?.removeEventListener('mouseup', onTranslateMouseUp)
+  document.removeEventListener('mousedown', onDocMouseDownForTranslate)
+})
 
 onMounted(() => {
+  document.addEventListener('mousedown', onDocMouseDownForTranslate)
   if (!result.value) {
     // Try to restore persisted result (survives refresh, includes AI grades)
     try {
@@ -869,6 +1293,7 @@ onMounted(() => {
   padding: 20px;
   overflow-y: auto;
   flex: 1;
+  position: relative;
   line-height: 1.9;
   font-size: 14px;
 }
@@ -899,6 +1324,26 @@ onMounted(() => {
 .result-para {
   margin-bottom: 14px;
   text-align: justify;
+}
+
+.result-para.labeled-para {
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  column-gap: 10px;
+  align-items: start;
+}
+
+.passage-letter {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 18px;
+  font-weight: 800;
+  color: #111827;
+  line-height: 1.9;
+  text-align: center;
+}
+
+.passage-text {
+  min-width: 0;
 }
 
 /* Visual Data Panel */
@@ -1004,6 +1449,7 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  position: relative;
 }
 
 .questions-review-header {
@@ -1295,6 +1741,7 @@ onMounted(() => {
 .questions-compact {
   padding: 0;
   overflow: hidden;
+  position: relative;
 }
 
 .compact-header {
@@ -1325,8 +1772,242 @@ onMounted(() => {
   color: var(--text-muted);
 }
 
+/* ── Translate Bubble ──────────────────────────────────── */
+.translate-bubble {
+  position: absolute;
+  z-index: 20;
+  min-width: 220px;
+  max-width: 360px;
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  border-radius: 12px;
+  box-shadow: 0 14px 40px rgba(15, 23, 42, 0.12);
+  padding: 10px 12px;
+}
+.tb-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.tb-btn {
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  background: rgba(59, 130, 246, 0.12);
+  color: #1D4ED8;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+.tb-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.tb-close {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  background: #fff;
+  cursor: pointer;
+  color: #475569;
+  font-size: 16px;
+  line-height: 1;
+}
+.tb-result { margin-top: 10px; }
+.tb-translation { font-size: 13px; color: #0F172A; line-height: 1.55; font-weight: 600; }
+.tb-notes { margin-top: 6px; font-size: 12px; color: #64748B; line-height: 1.5; }
+
+/* ── FAB Group ──────────────────────────────────────────── */
+.result-fabs {
+  position: fixed;
+  bottom: 28px;
+  right: 28px;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+.fab-minimize-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid #D1D5DB;
+  background: #fff;
+  color: #6B7280;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  transition: all 0.2s;
+  align-self: flex-end;
+}
+.fab-minimize-btn:hover { background: #F3F4F6; border-color: #9CA3AF; }
+.fab-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.fab-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 18px;
+  border-radius: 999px;
+  border: none;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(27,67,50,0.35);
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+.fab-toggle:hover { background: #145229; box-shadow: 0 6px 20px rgba(27,67,50,0.45); }
+.fab-icon { font-size: 15px; }
+
+/* Translate FAB */
+.translate-fab {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+.tl-toggle { background: #1D4ED8 !important; }
+.tl-toggle:hover { background: #1E40AF !important; }
+.translate-fab.active .tl-toggle { background: #374151 !important; }
+
+/* ── AI Assistant FAB & Chat Panel ──────────────────────── */
+.ai-assistant-fab {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+.ai-toggle { background: #2D6A4F !important; }
+.ai-toggle:hover { background: #1B4332 !important; }
+.ai-chat-panel {
+  position: fixed; z-index: 1000;
+  background: var(--bg-white, #fff); border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.18); display: flex; flex-direction: column;
+  overflow: hidden; border: 1px solid var(--border-color, #E5E7EB);
+}
+.ai-chat-panel.ai-maximized {
+  left: 5vw !important; top: 5vh !important;
+  width: 90vw !important; height: 90vh !important;
+  border-radius: 16px;
+}
+.ai-chat-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; background: #2D6A4F; color: #fff; font-size: 14px; font-weight: 600;
+  cursor: grab; user-select: none; flex-shrink: 0;
+}
+.ai-chat-header:active { cursor: grabbing; }
+.ai-header-actions { display: flex; align-items: center; gap: 4px; }
+.ai-chat-btn { background: none; border: none; color: #fff; font-size: 18px; cursor: pointer; padding: 2px 6px; opacity: 0.8; border-radius: 4px; display: flex; align-items: center; justify-content: center; }
+.ai-chat-btn:hover { opacity: 1; background: rgba(255,255,255,0.15); }
+.ai-context-selector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #E5E7EB;
+  background: #F8FAFC;
+  flex-shrink: 0;
+}
+.ai-context-label {
+  font-size: 12px;
+  color: #64748B;
+  font-weight: 700;
+}
+.ai-context-selector select {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid #CBD5E1;
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: #334155;
+  background: #fff;
+  outline: none;
+}
+.ai-context-selector select:focus { border-color: #2D6A4F; }
+.ai-chat-messages {
+  flex: 1; overflow-y: auto; padding: 12px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.ai-resize-handle {
+  position: absolute; right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize;
+  background: linear-gradient(135deg, transparent 50%, rgba(0,0,0,0.15) 50%);
+  border-radius: 0 0 12px 0;
+}
+.ai-chat-empty {
+  text-align: center; color: #9CA3AF; font-size: 13px; padding: 30px 10px;
+}
+.ai-chat-empty p { margin: 4px 0; }
+.ai-chat-hint { font-size: 12px; color: #D1D5DB; }
+.ai-msg { display: flex; }
+.ai-msg.user { justify-content: flex-end; }
+.ai-msg.assistant { justify-content: flex-start; }
+.ai-msg-bubble {
+  max-width: 85%; padding: 8px 12px; border-radius: 10px; font-size: 13px; line-height: 1.5;
+}
+.ai-msg-bubble p { margin: 0; }
+.ai-msg.user .ai-msg-bubble {
+  background: #2D6A4F; color: #fff; border-bottom-right-radius: 3px;
+}
+.ai-msg.assistant .ai-msg-bubble {
+  background: #F3F4F6; color: #1F2937; border-bottom-left-radius: 3px;
+}
+.ai-typing {
+  display: flex; align-items: center; gap: 4px; padding: 10px 16px;
+}
+.ai-typing .dot {
+  width: 7px; height: 7px; border-radius: 50%; background: #9CA3AF;
+  animation: ai-dot-bounce 1.2s infinite ease-in-out;
+}
+.ai-typing .dot:nth-child(2) { animation-delay: 0.2s; }
+.ai-typing .dot:nth-child(3) { animation-delay: 0.4s; }
+@keyframes ai-dot-bounce {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+  40% { transform: scale(1); opacity: 1; }
+}
+.ai-chat-input {
+  display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid #E5E7EB; background: #FAFAFA;
+}
+.ai-chat-input input {
+  flex: 1; border: 1px solid #D1D5DB; border-radius: 8px; padding: 8px 12px;
+  font-size: 13px; outline: none; transition: border-color 0.2s;
+}
+.ai-chat-input input:focus { border-color: #2D6A4F; }
+.ai-chat-input button {
+  padding: 8px 16px; background: #2D6A4F; color: #fff; border: none; border-radius: 8px;
+  font-size: 13px; cursor: pointer; transition: background 0.2s; white-space: nowrap;
+}
+.ai-chat-input button:hover:not(:disabled) { background: #1B4332; }
+.ai-chat-input button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Markdown in AI bubbles */
+.ai-msg-bubble :deep(.md-p) { margin: 2px 0; }
+.ai-msg-bubble :deep(.md-h) { font-size: 14px; font-weight: 700; margin: 6px 0 2px; }
+.ai-msg-bubble :deep(.md-list) { margin: 4px 0; padding-left: 18px; }
+.ai-msg-bubble :deep(.md-list li) { margin: 2px 0; }
+.ai-msg-bubble :deep(.md-quote) { margin: 4px 0; padding: 4px 10px; border-left: 3px solid #9CA3AF; color: #6B7280; font-style: italic; }
+.ai-msg-bubble :deep(.md-code) { background: rgba(0,0,0,0.06); padding: 1px 5px; border-radius: 3px; font-family: monospace; font-size: 12px; }
+.ai-msg-bubble :deep(.md-code-block) { background: rgba(0,0,0,0.06); padding: 8px 10px; border-radius: 6px; font-family: monospace; font-size: 12px; overflow-x: auto; margin: 4px 0; white-space: pre-wrap; }
+.ai-msg-bubble :deep(strong) { font-weight: 700; }
+.ai-msg-bubble :deep(em) { font-style: italic; }
+
+.collector-expand-enter-active,
+.collector-expand-leave-active { transition: opacity 0.2s, transform 0.2s; }
+.collector-expand-enter-from,
+.collector-expand-leave-to { opacity: 0; transform: translateY(8px) scale(0.97); }
+
 @media (max-width: 1024px) {
   .result-body { grid-template-columns: 1fr; }
   .result-passage { position: static; max-height: 50vh; }
+  .ai-chat-panel:not(.ai-maximized) { width: 300px !important; height: 400px !important; }
 }
 </style>

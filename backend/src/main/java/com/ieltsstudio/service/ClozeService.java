@@ -29,6 +29,10 @@ import java.util.*;
 @Service
 public class ClozeService {
 
+    private static final HttpClient SHARED_HTTP_CLIENT = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(15))
+            .build();
+
     @Value("${ai.deepseek.api-key:}")
     private String apiKey;
 
@@ -200,10 +204,6 @@ public class ClozeService {
         String requestJson = objectMapper.writeValueAsString(requestBody);
         log.debug("ClozeService calling DeepSeek, request length={}", requestJson.length());
 
-        HttpClient client = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(15))
-                .build();
-
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + "/chat/completions"))
                 .header("Content-Type", "application/json")
@@ -212,7 +212,7 @@ public class ClozeService {
                 .timeout(Duration.ofSeconds(90))
                 .build();
 
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = SHARED_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
 
         if (response.statusCode() >= 400) {
             log.error("DeepSeek API error: HTTP {}, body={}", response.statusCode(), response.body());

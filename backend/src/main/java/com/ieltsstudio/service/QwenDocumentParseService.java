@@ -57,6 +57,10 @@ public class QwenDocumentParseService {
 
     private final ObjectMapper objectMapper;
 
+    private static final HttpClient SHARED_HTTP_CLIENT = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(30))
+            .build();
+
     public boolean isConfigured() {
         return apiKey != null && !apiKey.isBlank();
     }
@@ -118,10 +122,6 @@ public class QwenDocumentParseService {
                 )
         ));
 
-        HttpClient client = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(30))
-                .build();
-
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + "/chat/completions"))
                 .header("Content-Type", "application/json")
@@ -130,7 +130,7 @@ public class QwenDocumentParseService {
                 .timeout(Duration.ofSeconds(120))
                 .build();
 
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = SHARED_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
         if (response.statusCode() >= 400) {
             throw new RuntimeException("Qwen parse failed HTTP " + response.statusCode() + ": " + response.body());
         }

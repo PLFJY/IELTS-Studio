@@ -54,7 +54,7 @@ public class AsyncParseService {
             "TEN", 10
     );
 
-    @Async
+    @Async("asyncParseExecutor")
     public void parseAndSave(Long examId, byte[] fileBytes, String originalFilename,
                              boolean parsePrecise, String extractedText, String examType) {
         try {
@@ -133,7 +133,7 @@ public class AsyncParseService {
         }
     }
 
-    @Async
+    @Async("asyncParseExecutor")
     public void parseAndSaveImages(Long examId, List<byte[]> imageBytes, List<String> filenames,
                                    boolean parsePrecise, String extractedText, String examType) {
         try {
@@ -161,7 +161,7 @@ public class AsyncParseService {
     /**
      * Legacy method for backward compatibility - defaults to reading type
      */
-    @Async
+    @Async("asyncParseExecutor")
     public void parseAndSave(Long examId, byte[] fileBytes, String originalFilename,
                              boolean parsePrecise, String extractedText) {
         parseAndSave(examId, fileBytes, originalFilename, parsePrecise, extractedText, "reading");
@@ -206,6 +206,10 @@ public class AsyncParseService {
             merged.put("passages", allPassages);
             merged.put("questions", new ArrayList<>(deduped.values()));
 
+            // Post-process: enrich options, fix missing heading questions, etc.
+            String combinedPassageText = String.join("\n", allPassages);
+            aiParseService.postProcess(merged, combinedPassageText);
+
             boolean anyWrite = allQuestions.stream().anyMatch(q -> "write".equals(q.get("type")));
             String qwenExamType = anyWrite ? "writing" : (original.getType() != null ? original.getType() : "reading");
             if (anyWrite) original.setType("writing");
@@ -215,6 +219,11 @@ public class AsyncParseService {
                     examId, sections.size(), deduped.size());
         } else {
             // Single section result
+            // Post-process: enrich options, fix missing heading questions, etc.
+            List<String> singlePassages = (List<String>) parsed.get("passages");
+            String singlePassageText = singlePassages != null ? String.join("\n", singlePassages) : "";
+            aiParseService.postProcess(parsed, singlePassageText);
+
             List<Map<String, Object>> questions = (List<Map<String, Object>>) parsed.get("questions");
             boolean anyWrite = questions != null && questions.stream().anyMatch(q -> "write".equals(q.get("type")));
             String qwenExamType = anyWrite ? "writing" : (original.getType() != null ? original.getType() : "reading");
@@ -334,13 +343,15 @@ public class AsyncParseService {
         return fileParseService.parseExamContent(text);
     }
 
-    // ── Workflow parse: Step1 structure + Step2 per-group answers ──────────────
+    // ── Workflow parse: Step1A passages + Step1B questions + Step2 per-group answers ──
 
     /**
-     * Two-step workflow parse using DeepSeek:
-     *   Step 1: Extract passages + question group skeleton (type, range, options, question texts)
-     *   Step 2: For each group, call AI to generate answers + explanations
-     * Falls back to parseSingle if workflow fails or DeepSeek is not configured.
+     * Three-step workflow parse using DeepSeek (each step has a focused prompt):
+     *   Step 1A: Extract passages only (focused on article text extraction)
+     *   Step 1B: Identify question groups structure (focused on question detection)
+     *   Step 2:  For each group, call AI to generate answers + explanations
+     * Falls back to legacy combined Step1 if split approach fails,
+     * and further falls back to parseSingle if everything fails.
      */
     @SuppressWarnings("unchecked")
     private Map<String, Object> workflowParse(Long examId, String text) throws Exception {
@@ -355,19 +366,53 @@ public class AsyncParseService {
         }
 
         try {
-            // ── Step 1: Structure extraction ──
-            log.info("Exam {} – Workflow Step1: extracting structure...", examId);
-            Map<String, Object> step1 = aiParseService.workflowStep1(text);
+            List<String> passages = null;
+            List<Map<String, Object>> groups = null;
 
-            List<String> passages = (List<String>) step1.get("passages");
-            List<Map<String, Object>> groups = (List<Map<String, Object>>) step1.get("questionGroups");
+            // ── Step 1A: Extract passages (focused prompt) ──
+            try {
+                log.info("Exam {} – Workflow Step1A: extracting passages...", examId);
+                Map<String, Object> step1A = aiParseService.workflowStep1A(text);
+                passages = (List<String>) step1A.get("passages");
+                log.info("Exam {} – Workflow Step1A: extracted {} passages", examId,
+                        passages == null ? 0 : passages.size());
+            } catch (Exception step1AEx) {
+                log.warn("Exam {} – Workflow Step1A failed ({}), will try combined Step1",
+                        examId, step1AEx.getMessage());
+            }
+
+            // ── Step 1B: Identify question groups (focused prompt) ──
+            try {
+                log.info("Exam {} – Workflow Step1B: identifying question groups...", examId);
+                Map<String, Object> step1B = aiParseService.workflowStep1B(text);
+                groups = (List<Map<String, Object>>) step1B.get("questionGroups");
+                log.info("Exam {} – Workflow Step1B: identified {} question groups", examId,
+                        groups == null ? 0 : groups.size());
+            } catch (Exception step1BEx) {
+                log.warn("Exam {} – Workflow Step1B failed ({}), will try combined Step1",
+                        examId, step1BEx.getMessage());
+            }
+
+            // ── Fallback: if either step failed, try legacy combined Step1 ──
+            if (passages == null || groups == null || groups.isEmpty()) {
+                log.info("Exam {} – Split steps incomplete (passages={}, groups={}), trying combined Step1",
+                        examId, passages == null ? "null" : passages.size(),
+                        groups == null ? "null" : groups.size());
+                Map<String, Object> step1Combined = aiParseService.workflowStep1(text);
+                if (passages == null) {
+                    passages = (List<String>) step1Combined.get("passages");
+                }
+                if (groups == null || groups.isEmpty()) {
+                    groups = (List<Map<String, Object>>) step1Combined.get("questionGroups");
+                }
+            }
 
             if (groups == null || groups.isEmpty()) {
-                log.warn("Exam {} – Workflow Step1 returned 0 groups, falling back to parseSingle", examId);
+                log.warn("Exam {} – Workflow returned 0 groups, falling back to parseSingle", examId);
                 return parseSingle(examId, text);
             }
 
-            log.info("Exam {} – Workflow Step1: {} passages, {} question groups", examId,
+            log.info("Exam {} – Workflow structure: {} passages, {} question groups", examId,
                     passages == null ? 0 : passages.size(), groups.size());
 
             // ── Step 2: Per-group answer generation ──
@@ -382,7 +427,7 @@ public class AsyncParseService {
                     Map<String, Object> step2Result = aiParseService.workflowStep2(passageText, group);
                     List<Map<String, Object>> groupQuestions = (List<Map<String, Object>>) step2Result.get("questions");
                     if (groupQuestions != null && !groupQuestions.isEmpty()) {
-                        // Ensure options from Step1 are carried over if Step2 didn't include them
+                        // Ensure options from Step1B are carried over if Step2 didn't include them
                         Object groupOptions = group.get("options");
                         if (groupOptions != null) {
                             for (Map<String, Object> q : groupQuestions) {
@@ -396,7 +441,6 @@ public class AsyncParseService {
                                 examId, range, groupQuestions.size());
                     } else {
                         log.warn("Exam {} – Workflow Step2 group '{}': returned 0 questions", examId, range);
-                        // Fallback: build questions from Step1 skeleton without answers
                         buildFallbackQuestions(group, allQuestions);
                     }
                 } catch (Exception step2Ex) {
@@ -409,6 +453,10 @@ public class AsyncParseService {
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("passages", passages != null ? passages : List.of());
             result.put("questions", allQuestions);
+
+            // Post-process: enrich options, fix locatorText, etc.
+            aiParseService.postProcess(result, text);
+
             log.info("Exam {} – Workflow complete: {} passages, {} questions",
                     examId, passages != null ? passages.size() : 0, allQuestions.size());
             return result;

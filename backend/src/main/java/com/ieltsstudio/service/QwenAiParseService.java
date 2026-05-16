@@ -62,6 +62,10 @@ public class QwenAiParseService {
 
     private final ObjectMapper objectMapper;
 
+    private static final HttpClient SHARED_HTTP_CLIENT = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(30))
+            .build();
+
     // ── Base prompts ───────────────────────────────────────────────────────
     
     private static final String BASE_SYSTEM_PROMPT = """
@@ -96,12 +100,17 @@ public class QwenAiParseService {
             - 【重要】如果一组题目共享同一个选项列表（如 Questions 9-13 从 A-P 选项中选择），每道题的 options 都必须包含完整选项列表。
           类型 "fill"  → 填空/简答/句子完成/标题题
             字段：questionNumber, type, text, answer（单词或短语）, explanation, locatorText
+            - 【极其重要】如果填空题要求从方框词库/选项列表中选择（如 A-Q: A cost, B falling, C technology...），
+              每道题都必须包含 options JSON对象：{"A":"cost","B":"falling","C":"technology",...}
+            - 【极其重要】这类题仍然可以标记为 "fill"，但 options 绝不能只写 ["A","B","C"]，必须写完整词语。
 
         【重要】题型判定规则：
         - 如果题目要求从一个选项列表（如 A-P、A-H 等）中选择答案，必须标记为 "mcq"，并在 options 中列出所有可选项。
         - options 必须是 JSON 对象格式，每个选项值必须是完整的选项描述文字（不能只写字母标识）。
           例如：{"A":"Rainforests are in danger.","B":"Climate change is the main threat.","C":"..."}
         - 如果一组题目共享同一个选项列表（如 Questions 9-13 从 A-P 中选），每道题的 options 都必须包含完整选项列表。
+        - 如果填空题带有词库框（如 A cost / B falling / C technology / ... / Q independent），每道填空题也必须包含完整 options 对象。
+          示例：{"A":"cost","B":"falling","C":"technology","D":"undernourished","E":"earlier","F":"later"}
         - 只有答案是从文章中提取的单词或短语时才使用 "fill"。
         - 选项列表可能出现在一组题目的前面或后面，需要关联到对应的题目。
         - 匹配题（matching）也属于 "mcq"，需要将匹配列表作为 options 提供。
@@ -110,6 +119,10 @@ public class QwenAiParseService {
         - 【极其重要】对于阅读部分：所有问题都放入 questions 数组，passages 数组中【绝对不能包含任何题目】。
         - 【极其重要】正文（passages）只包含文章/阅读段落内容，题目必须全部放入 questions 数组。
         - 保留原始问题编号（1, 2, 3...）。
+        - 【极其重要】不得跳过任何题号。如果题目指示为 Questions 1-5 或 Questions 1-13，则必须输出每一道题，不得遗漏。
+        - 【极其重要】对于标题匹配题（heading matching），如果文章中有 A、B、C、D、E 等标注段落，则必须为每个段落都生成一道题目（text 为 "Paragraph A"、"Paragraph B" 等），不能只生成其中一道。
+        - 【极其重要】options 绝不能写成范围字符串如 "i-vii"、"A-F"！必须展开为完整对象，例如 {"i":"Avoiding...","ii":"A successful..."}。
+        - 【极其重要】locatorText 必须从 passage 中原样复制，即使有 OCR 拼写错误也保留原样，绝不能编造。
         - answer：如果答案区域有答案则复制；否则从 passage 中推导。
         - locatorText：来自 passage 的【短小原词短语（3-8个词）】，不可为空。
         - 只返回 JSON 对象，不要用 markdown 代码块包裹，不要输出任何额外文字。
@@ -257,9 +270,11 @@ public class QwenAiParseService {
               类型 "tfng"  → {questionNumber, type, text, answer, explanation, locatorText}
               类型 "mcq"   → {questionNumber, type, text, options{"A":...}, answer, explanation, locatorText}
               类型 "fill"  → {questionNumber, type, text, answer, explanation, locatorText}
+                如果填空题带有方框词库/选项列表（如 A-Q: A cost, B falling...），必须额外包含完整 options 对象 {"A":"cost","B":"falling",...}
 
             【重要】题型判定规则：
             - 如果题目要求从一个选项列表（如 A-P、A-H 等）中选择答案，必须标记为 "mcq"，并在 options 中列出所有可选项。
+            - 如果填空题要求从方框词库（如 A-Q）中选择答案，仍可标记为 "fill"，但每道题必须包含完整 options 对象，不能只写字母。
             - 只有答案是从文章中提取的单词或短语时才使用 "fill"。
             - 匹配题（matching）和列表选择题也属于 "mcq"。
 
@@ -469,10 +484,6 @@ public class QwenAiParseService {
                 Map.of("role", "user", "content", userContent)
         ));
 
-        HttpClient client = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(30))
-                .build();
-
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + "/chat/completions"))
                 .header("Content-Type", "application/json")
@@ -482,7 +493,7 @@ public class QwenAiParseService {
                 .timeout(Duration.ofSeconds(180))
                 .build();
 
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = SHARED_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
         if (response.statusCode() >= 400) {
             throw new RuntimeException("Qwen AI parse failed HTTP " + response.statusCode() + ": " + response.body());
         }
