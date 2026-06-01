@@ -433,6 +433,39 @@ export const useWordStore = defineStore('word', () => {
     }, 3000)
   }
 
+  // Fetch a single book meta and update local books list
+  async function _refreshBookMeta(bookId) {
+    try {
+      const res = await request.get(`/words/books/${bookId}`)
+      const book = res.data
+      const idx = books.value.findIndex(b => b.id === bookId)
+      if (idx !== -1 && book) {
+        books.value[idx] = { ...books.value[idx], status: book.status, wordCount: book.wordCount }
+      }
+    } catch { /* ignore */ }
+  }
+
+  // After quick-add, poll entries/count every 5s for up to 1 minute
+  const _pollEntriesTimers = {}
+  function _pollEntriesAfterAdd(bookId, durationMs = 60000, intervalMs = 5000) {
+    if (_pollEntriesTimers[bookId]) return
+    const endAt = Date.now() + durationMs
+    _pollEntriesTimers[bookId] = setInterval(async () => {
+      if (Date.now() > endAt) {
+        clearInterval(_pollEntriesTimers[bookId])
+        delete _pollEntriesTimers[bookId]
+        return
+      }
+      if (currentBookId.value === bookId) {
+        await loadEntries(bookId)
+        const idx = books.value.findIndex(b => b.id === bookId)
+        if (idx !== -1) books.value[idx] = { ...books.value[idx], wordCount: bookEntries.value.length }
+      } else {
+        await _refreshBookMeta(bookId)
+      }
+    }, intervalMs)
+  }
+
   async function deleteEntry(entryId) {
     await request.delete(`/words/entries/${entryId}`)
     const entryIdx = bookEntries.value.findIndex(e => e.id === entryId)
@@ -454,6 +487,8 @@ export const useWordStore = defineStore('word', () => {
     if (!words || words.length === 0) return
     const targetBookId = currentBookId.value === 'builtin' ? 'default' : currentBookId.value
     const res = await request.post(`/words/books/${targetBookId}/quick-add`, { words })
+    // start a short polling window to surface newly inserted entries/counts
+    _pollEntriesAfterAdd(targetBookId, 60000, 5000)
     return res.data
   }
 

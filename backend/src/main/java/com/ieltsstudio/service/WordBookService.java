@@ -118,6 +118,11 @@ public class WordBookService {
         WordEntry src = wordEntryMapper.selectById(entryId);
         if (src == null || !src.getUserId().equals(userId)) return null;
         WordBook defaultBook = ensureDefaultBook(userId);
+        // dedupe: if same word already exists in default book, return it
+        Long existId = wordEntryMapper.findIdByBookIdAndWord(defaultBook.getId(), src.getWord());
+        if (existId != null) {
+            return wordEntryMapper.selectById(existId);
+        }
         WordEntry copy = new WordEntry();
         copy.setBookId(defaultBook.getId());
         copy.setUserId(userId);
@@ -141,10 +146,16 @@ public class WordBookService {
     /** Add a word by data (used for builtin/client-side words that have no DB entry). */
     public WordEntry addWordToDefaultBook(Long userId, Map<String, String> data) {
         WordBook defaultBook = ensureDefaultBook(userId);
+        String word = data.getOrDefault("word", "").trim();
+        // dedupe before building entry
+        if (!word.isEmpty()) {
+            Long existId = wordEntryMapper.findIdByBookIdAndWord(defaultBook.getId(), word);
+            if (existId != null) return wordEntryMapper.selectById(existId);
+        }
         WordEntry entry = new WordEntry();
         entry.setBookId(defaultBook.getId());
         entry.setUserId(userId);
-        entry.setWord(data.getOrDefault("word", "").trim());
+        entry.setWord(word);
         entry.setPhonetic(data.get("phonetic"));
         entry.setPos(data.get("pos"));
         entry.setPosType(data.get("posType"));

@@ -270,7 +270,7 @@
           </div>
 
           <div class="keyboard-hint">
-            <span>Enter</span> 确认拼写 &nbsp;·&nbsp; <span>← →</span> 切换单词 &nbsp;·&nbsp; <span>F2</span> 重播发音
+            <span>Enter</span> 确认拼写 &nbsp;·&nbsp; <span>← →</span> 切换单词 &nbsp;·&nbsp; <span>↑</span> 重播发音 &nbsp;·&nbsp; <span>↓</span> 显示答案
           </div>
         </div>
 
@@ -973,11 +973,17 @@ function handleSpellEnter() {
 }
 
 function handleSpellInputKeydown(e) {
-  if (e.key === 'F2' && wordStore.currentWord?.word) {
+  if (e.key === 'ArrowUp' && wordStore.currentWord?.word) {
     e.preventDefault()
     playWord(wordStore.currentWord.word)
     return
   }
+  if (e.key === 'ArrowDown' && spellResult.value !== 'correct' && spellResult.value !== 'revealed') {
+    e.preventDefault()
+    revealSpell()
+    return
+  }
+  
   if (e.key !== 'Enter' && e.code !== 'NumpadEnter') return
   e.preventDefault()
   if (e.isComposing) return
@@ -1024,10 +1030,19 @@ function handleKeydown(e) {
   const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable
   const isInteractive = isTyping || tag === 'BUTTON'
   if (wordStore.studyMode === 'spell') {
-    if (e.key === 'F2' && wordStore.currentWord?.word) {
-      e.preventDefault()
-      playWord(wordStore.currentWord.word)
+    if (!isInteractive) {
+      if (e.key === 'ArrowUp' && wordStore.currentWord?.word) {
+        e.preventDefault()
+        playWord(wordStore.currentWord.word)
+        return
+      }
+      if (e.key === 'ArrowDown' && spellResult.value !== 'correct' && spellResult.value !== 'revealed') {
+        e.preventDefault()
+        revealSpell()
+        return
+      }
     }
+    
     if (e.key === 'Enter' && !isInteractive && Date.now() >= blockSpellNextUntil.value && (spellResult.value === 'correct' || spellResult.value === 'revealed')) {
       e.preventDefault()
       spellNext()

@@ -50,12 +50,25 @@ public class AsyncWordService {
                     ? aiEntries.subList(0, MAX_WORDS_PER_UPLOAD)
                     : aiEntries;
 
+            // Build lowercase set of existing words for this book to avoid duplicates
+            var existing = new java.util.HashSet<String>();
+            try {
+                List<String> existedWords = wordEntryMapper.findWordsByBookId(bookId);
+                if (existedWords != null) existedWords.forEach(w -> { if (w != null) existing.add(w.toLowerCase()); });
+            } catch (Exception ignore) {}
+            var seenInBatch = new java.util.HashSet<String>();
+
             int saved = 0;
             for (Map<String, Object> e : limited) {
                 try {
                     String word = str(e, "word");
                     String meaning = str(e, "meaning");
                     if (word == null || word.isBlank() || meaning == null || meaning.isBlank()) continue;
+                    String key = word.toLowerCase();
+                    if (existing.contains(key) || seenInBatch.contains(key)) {
+                        log.debug("Skip duplicate word '{}' for book {}", word, bookId);
+                        continue;
+                    }
                     WordEntry entry = new WordEntry();
                     entry.setBookId(bookId);
                     entry.setUserId(userId);
@@ -68,6 +81,8 @@ public class AsyncWordService {
                     entry.setExampleTranslation(str(e, "exampleTranslation"));
                     entry.setRootMemory(str(e, "rootMemory"));
                     wordEntryMapper.insert(entry);
+                    seenInBatch.add(key);
+                    existing.add(key);
                     saved++;
                 } catch (Exception ex) {
                     log.warn("Failed to save word entry: {}", e, ex);
@@ -98,6 +113,14 @@ public class AsyncWordService {
                 log.warn("AI returned no entries for quick-add words: {}", rawWords);
                 return;
             }
+            // Prepare existing-set and in-batch set for deduplication
+            var existing = new java.util.HashSet<String>();
+            try {
+                List<String> existedWords = wordEntryMapper.findWordsByBookId(bookId);
+                if (existedWords != null) existedWords.forEach(w -> { if (w != null) existing.add(w.toLowerCase()); });
+            } catch (Exception ignore) {}
+            var seenInBatch = new java.util.HashSet<String>();
+
             int saved = 0;
             for (Map<String, Object> e : aiEntries) {
                 try {
@@ -105,6 +128,11 @@ public class AsyncWordService {
                     String meaning = str(e, "meaning");
                     if (word == null || word.isBlank() || meaning == null || meaning.isBlank()) {
                         log.warn("Skip invalid quick-add entry, missing word or meaning: {}", e);
+                        continue;
+                    }
+                    String key = word.toLowerCase();
+                    if (existing.contains(key) || seenInBatch.contains(key)) {
+                        log.debug("Skip duplicate word '{}' for book {} (quick-add)", word, bookId);
                         continue;
                     }
                     WordEntry entry = new WordEntry();
@@ -119,6 +147,8 @@ public class AsyncWordService {
                     entry.setExampleTranslation(str(e, "exampleTranslation"));
                     entry.setRootMemory(str(e, "rootMemory"));
                     wordEntryMapper.insert(entry);
+                    seenInBatch.add(key);
+                    existing.add(key);
                     saved++;
                 } catch (Exception ex) {
                     log.error("Failed to quick-add word entry: {}", e, ex);
