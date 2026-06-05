@@ -21,6 +21,11 @@ public class DatabaseMigrationRunner implements CommandLineRunner {
     }
 
     private void ensureRootMemoryColumn() {
+        if (!tableExists("word_entries")) {
+            log.warn("Skip migration: table word_entries not found");
+            return;
+        }
+
         Integer count = jdbcTemplate.queryForObject("""
                 SELECT COUNT(*)
                 FROM information_schema.COLUMNS
@@ -36,6 +41,11 @@ public class DatabaseMigrationRunner implements CommandLineRunner {
     }
 
     private void ensureExampleTranslationColumn() {
+        if (!tableExists("word_entries")) {
+            log.warn("Skip migration: table word_entries not found");
+            return;
+        }
+
         Integer count = jdbcTemplate.queryForObject("""
                 SELECT COUNT(*)
                 FROM information_schema.COLUMNS
@@ -71,5 +81,16 @@ public class DatabaseMigrationRunner implements CommandLineRunner {
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                 """);
         log.info("Database migration checked: word_study_states");
+    }
+
+    private boolean tableExists(String tableName) {
+        Integer count = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM information_schema.TABLES
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = ?
+                """, Integer.class, tableName);
+
+        return count != null && count > 0;
     }
 }

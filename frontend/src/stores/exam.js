@@ -366,7 +366,15 @@ export const useExamStore = defineStore('exam', () => {
   const examStartTime = ref(null)
   const examResult = ref(null)
   const isSubmitting = ref(false)
-  const examHistory = ref(JSON.parse(localStorage.getItem('ielts_exam_history') || '[]'))
+  function _historyKey() {
+    try {
+      const raw = localStorage.getItem('ielts_user')
+      const user = raw ? JSON.parse(raw) : null
+      const uid = user?.id || user?.userId || user?.username || 'guest'
+      return `ielts_exam_history_${uid}`
+    } catch { return 'ielts_exam_history_guest' }
+  }
+  const examHistory = ref(JSON.parse(localStorage.getItem(_historyKey()) || '[]'))
 
   const currentExamQuestions = computed(() => {
     if (!currentExam.value) return []
@@ -484,7 +492,7 @@ export const useExamStore = defineStore('exam', () => {
     }
     examHistory.value.unshift(historyEntry)
     examHistory.value = examHistory.value.slice(0, 50)
-    localStorage.setItem('ielts_exam_history', JSON.stringify(examHistory.value))
+    localStorage.setItem(_historyKey(), JSON.stringify(examHistory.value))
 
     const errorBook = JSON.parse(localStorage.getItem('ielts_error_book') || '[]')
     const wrongOnes = results.filter(r => !r.isCorrect).map(r => ({
@@ -749,7 +757,7 @@ export const useExamStore = defineStore('exam', () => {
     exams.value = exams.value.filter(e => e.id !== id)
     // Remove associated exam history records
     examHistory.value = examHistory.value.filter(h => h.examId !== id)
-    localStorage.setItem('ielts_exam_history', JSON.stringify(examHistory.value))
+    localStorage.setItem(_historyKey(), JSON.stringify(examHistory.value))
     // Remove associated error book entries
     const errorBook = JSON.parse(localStorage.getItem('ielts_error_book') || '[]')
     const filteredErrors = errorBook.filter(e => e.examId !== id)
@@ -836,7 +844,7 @@ export const useExamStore = defineStore('exam', () => {
 
         // Merge collection entries: replace individual child records with consolidated collection entries
         try {
-          const savedHistory = JSON.parse(localStorage.getItem('ielts_exam_history') || '[]')
+          const savedHistory = JSON.parse(localStorage.getItem(_historyKey()) || '[]')
           const collectionEntries = savedHistory.filter(h => h.isCollection)
           if (collectionEntries.length > 0) {
             const childIds = new Set()
@@ -850,7 +858,7 @@ export const useExamStore = defineStore('exam', () => {
         } catch { /* ignore */ }
 
         examHistory.value = mapped
-        localStorage.setItem('ielts_exam_history', JSON.stringify(examHistory.value))
+        localStorage.setItem(_historyKey(), JSON.stringify(examHistory.value))
       }
       // If backend returns empty, keep existing localStorage history as fallback
     } catch { /* offline — keep localStorage fallback */ }

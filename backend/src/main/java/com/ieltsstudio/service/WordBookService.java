@@ -6,6 +6,9 @@ import com.ieltsstudio.mapper.WordBookMapper;
 import com.ieltsstudio.mapper.WordEntryMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.Cache;
+import org.springframework.cache.CacheManager;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -22,6 +25,7 @@ public class WordBookService {
     private final WordBookMapper wordBookMapper;
     private final WordEntryMapper wordEntryMapper;
     private final AsyncWordService asyncWordService;
+    private final CacheManager cacheManager;
 
     /** Ensure the user has a default 生词本; create one if absent. */
     public WordBook ensureDefaultBook(Long userId) {
@@ -37,6 +41,7 @@ public class WordBookService {
         return book;
     }
 
+    @Cacheable(cacheNames = "books", key = "#userId")
     public List<WordBook> getUserBooks(Long userId) {
         return wordBookMapper.findByUserId(userId);
     }
@@ -49,6 +54,7 @@ public class WordBookService {
         book.setIsDefault(0);
         book.setWordCount(0);
         wordBookMapper.insert(book);
+        evictBooksCache(userId);
         return book;
     }
 
@@ -57,9 +63,12 @@ public class WordBookService {
         if (book == null || !book.getUserId().equals(userId)) return false;
         if (book.getIsDefault() != null && book.getIsDefault() == 1) return false; // cannot delete default
         wordBookMapper.deleteById(bookId);
+        evictEntriesCache(userId, bookId);
+        evictBooksCache(userId);
         return true;
     }
 
+    @Cacheable(cacheNames = "entries", key = "#userId + ':' + #bookId", unless = "#result == null || #result.isEmpty()")
     public List<WordEntry> getEntries(Long userId, Long bookId) {
         WordBook book = wordBookMapper.selectById(bookId);
         if (book == null || !book.getUserId().equals(userId)) return Collections.emptyList();
@@ -80,6 +89,8 @@ public class WordBookService {
             book.setWordCount(wordEntryMapper.countByBookId(entry.getBookId()));
             wordBookMapper.updateById(book);
         }
+        evictEntriesCache(userId, entry.getBookId());
+        evictBooksCache(userId);
         return true;
     }
 
@@ -110,6 +121,8 @@ public class WordBookService {
         if (exampleTranslation != null) entry.setExampleTranslation(exampleTranslation.trim());
         if (rootMemory != null) entry.setRootMemory(rootMemory.trim());
         wordEntryMapper.updateById(entry);
+        evictEntriesCache(userId, entry.getBookId());
+        evictBooksCache(userId);
         return entry;
     }
 
@@ -140,6 +153,8 @@ public class WordBookService {
             book.setWordCount(wordEntryMapper.countByBookId(defaultBook.getId()));
             wordBookMapper.updateById(book);
         }
+        evictEntriesCache(userId, defaultBook.getId());
+        evictBooksCache(userId);
         return copy;
     }
 
@@ -170,6 +185,8 @@ public class WordBookService {
             book.setWordCount(wordEntryMapper.countByBookId(defaultBook.getId()));
             wordBookMapper.updateById(book);
         }
+        evictEntriesCache(userId, defaultBook.getId());
+        evictBooksCache(userId);
         return entry;
     }
 
@@ -178,5 +195,15 @@ public class WordBookService {
         if (book == null || !book.getUserId().equals(userId)) return null;
         book.setWordCount(wordEntryMapper.countByBookId(bookId));
         return book;
+    }
+
+    private void evictBooksCache(Long userId) {
+        Cache cache = cacheManager.getCache("books");
+        if (cache != null) cache.evict(userId);
+    }
+
+    private void evictEntriesCache(Long userId, Long bookId) {
+        Cache cache = cacheManager.getCache("entries");
+        if (cache != null) cache.evict(userId + ":" + bookId);
     }
 }

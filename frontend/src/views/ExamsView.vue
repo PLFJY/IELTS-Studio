@@ -398,7 +398,7 @@ const fileInputRef = ref()
 const uploadFiles = ref([])
 const searchQ = ref('')
 const activeTab = ref('all')
-const tabCounts = ref({ all: 0, reading: null, listening: null, writing: null })
+const tabCounts = ref({ all: 0, reading: null, listening: null, writing: null, mock: null })
 
 const uploadForm = ref({ title: '', type: 'reading', duration: 60, description: '', parsePrecise: false })
 const uploadTitleDup = ref(false)
@@ -409,6 +409,7 @@ const tabs = [
   { label: '阅读', value: 'reading' },
   { label: '听力', value: 'listening' },
   { label: '写作', value: 'writing' },
+  { label: '示例', value: 'mock' },
 ]
 
 // ── Server-side Pagination ──────────────────────────────────────────────
@@ -427,6 +428,14 @@ let searchTimer = null
 
 async function fetchExams() {
   const token = localStorage.getItem('ielts_token') || ''
+  // 当选择“示例”标签时，强制使用本地内置试卷，不请求后端
+  if (activeTab.value === 'mock') {
+    const mockList = examStore.exams.filter(e => e.isMock)
+    pagedExams.value = mockList
+    examTotal.value = mockList.length
+    tabCounts.value.mock = mockList.length
+    return
+  }
   if (!token || token.startsWith('mock_token_')) {
     pagedExams.value = examStore.exams
     examTotal.value = examStore.exams.length
@@ -436,7 +445,10 @@ async function fetchExams() {
   loadingExams.value = true
   try {
     const params = { page: examPage.value, size: EXAM_PAGE_SIZE }
-    if (activeTab.value !== 'all') params.type = activeTab.value
+    if (activeTab.value !== 'all') {
+      // 非“示例”标签下，才透传到后端筛选类型
+      if (activeTab.value !== 'mock') params.type = activeTab.value
+    }
     if (searchQ.value.trim()) params.search = searchQ.value.trim()
     const res = await request.get('/exams', { params })
     const data = res.data || {}
@@ -467,8 +479,12 @@ async function fetchTabCounts() {
     return
   }
   const nextCounts = { ...tabCounts.value }
+  // “示例”标签计数来自本地 mock 数据
+  nextCounts.mock = (examStore.exams || []).filter(e => e.isMock).length
   await Promise.all(tabs.map(async tab => {
     try {
+      // 跳过对“示例”标签的后端统计
+      if (tab.value === 'mock') return
       const params = { page: 1, size: 1 }
       if (tab.value !== 'all') params.type = tab.value
       if (searchQ.value.trim()) params.search = searchQ.value.trim()
@@ -488,6 +504,7 @@ function updateMockTabCounts() {
     reading: source.filter(e => e.type === 'reading').length,
     listening: source.filter(e => e.type === 'listening').length,
     writing: source.filter(e => e.type === 'writing').length,
+    mock: source.filter(e => e.isMock).length,
   }
 }
 

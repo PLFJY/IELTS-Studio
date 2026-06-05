@@ -205,6 +205,14 @@
                     <button class="example-play-btn" @click="playExampleSentence" title="播放例句">🔊</button>
                   </div>
                 </div>
+                <button
+                  v-if="!wordStore.currentBook?.isDefault"
+                  class="card-action-btn add-btn"
+                  @click="doAddToDefault(activeSpellWord)"
+                  style="margin-top:8px"
+                >
+                  加入生词本
+                </button>
                 <button class="btn-primary spell-next-btn" @click="spellNext">
                   → 下一个
                 </button>
@@ -260,6 +268,14 @@
                 </div>
                 <button v-if="spellResult !== 'correct' && spellResult !== 'revealed'" class="spell-reveal-btn" @click="revealSpell">
                   显示答案
+                </button>
+                <button
+                  v-if="!wordStore.currentBook?.isDefault"
+                  class="card-action-btn add-btn"
+                  @click="doAddToDefault(wordStore.currentWord)"
+                  style="margin-top:8px"
+                >
+                  加入生词本
                 </button>
               </div>
             </div>

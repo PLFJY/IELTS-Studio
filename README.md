@@ -214,7 +214,15 @@ qwen:
 - **DeepSeek**：[platform.deepseek.com](https://platform.deepseek.com)
 - **DashScope（Qwen）**：[dashscope.aliyuncs.com](https://dashscope.aliyuncs.com)
 
-### 5. 启动后端
+### 5. （可选）启用 Redis 缓存
+- 编辑 `backend/src/main/resources/application.yml` 中的 Redis 区域（host/port/password 按需修改）。
+- 启动时设置环境变量 `APP_REDIS_ENABLED=true` 启用缓存；不设置则自动降级为本地内存缓存。
+- 启动后可在 redis-cli 验证：
+  ```bash
+  redis-cli KEYS "books::*" "entries::*" "studyState::*" "ielts:ingest:progress:*"
+  ```
+
+### 6. 启动后端
 
 ```bash
 cd backend
@@ -223,7 +231,7 @@ mvn spring-boot:run
 
 接口地址：`http://localhost:8080/api`
 
-### 6. 启动前端
+### 7. 启动前端
 
 ```bash
 cd frontend
@@ -248,6 +256,7 @@ npm run dev
 | `ai.deepseek.api-key` | DeepSeek API Key | ✅ |
 | `qwen.api-key` | DashScope API Key | 可选 |
 | `jwt.secret` | JWT 签名密钥 | ✅（生产环境必须更换） |
+| `app.redis.enabled` | 是否启用 Redis 缓存（true/false） | 可选，默认 false |
 | `spring.data.redis.*` | Redis 连接 | 可选 |
 
 ### 前端（.env.local）

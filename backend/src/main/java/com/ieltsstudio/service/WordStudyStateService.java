@@ -3,6 +3,8 @@ package com.ieltsstudio.service;
 import com.ieltsstudio.entity.WordStudyState;
 import com.ieltsstudio.mapper.WordStudyStateMapper;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CachePut;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
 import java.util.Map;
@@ -13,10 +15,12 @@ public class WordStudyStateService {
 
     private final WordStudyStateMapper wordStudyStateMapper;
 
+    @Cacheable(cacheNames = "studyState", key = "#userId + ':' + #bookId")
     public WordStudyState getState(Long userId, String bookId) {
         return wordStudyStateMapper.findByUserIdAndBookId(userId, bookId);
     }
 
+    @CachePut(cacheNames = "studyState", key = "#userId + ':' + #bookId")
     public WordStudyState saveState(Long userId, String bookId, Map<String, Object> body) {
         WordStudyState state = wordStudyStateMapper.findByUserIdAndBookId(userId, bookId);
         if (state == null) {

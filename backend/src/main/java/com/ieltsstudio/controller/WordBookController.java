@@ -173,6 +173,19 @@ public class WordBookController {
     }
 
     /**
+     * GET /words/books/{id}/ingest-progress — 查询异步导入/快速添加进度
+     */
+    @GetMapping("/books/{id}/ingest-progress")
+    public Result<?> getIngestProgress(@PathVariable Long id,
+                                       @AuthenticationPrincipal AuthUser authUser) {
+        if (!wordBookService.existsForUser(authUser.getId(), id)) {
+            return Result.notFound("词书不存在");
+        }
+        Map<String, Object> progress = asyncWordService.getIngestProgress(authUser.getId(), id);
+        return Result.success(progress.isEmpty() ? Map.of("status", "not_found") : progress);
+    }
+
+    /**
      * POST /words/books/default/quick-add — 快速批量添加单词到默认词书（异步）
      *
      * <p>请求体：{@code { "words": ["apple", "banana", ...] }}

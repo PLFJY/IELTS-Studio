@@ -25,20 +25,29 @@ spring:
       connection-timeout: 30000
 
   # ─── Redis 缓存（可选）──────────────────────────────────────────────────────
-  # 未启用 Redis 时注释掉此段，相关功能将降级为无缓存模式
+  # 按需修改地址/密码，并通过 app.redis.enabled=true 显式开启
   data:
     redis:
-      host: localhost
-      port: 6379
-      password:        # 无密码时留空
+      host: 127.0.0.1   # TODO: 修改为你的 Redis 地址
+      port: 6379        # TODO: 修改为你的 Redis 端口
+      password: ""      # TODO: 生产环境填写密码
       database: 0
-      timeout: 3000ms
+      lettuce:
+        pool:
+          max-active: 16
+          max-idle: 8
+          min-idle: 1
+      timeout: 2s
 
   # ─── 文件上传大小限制 ────────────────────────────────────────────────────────
   servlet:
     multipart:
-      max-file-size: 20MB     # 单文件最大 20MB
-      max-request-size: 25MB  # 单次请求最大 25MB
+      max-file-size: 50MB     # 单文件最大 20MB
+      max-request-size: 55MB  # 单次请求最大 25MB
+# Feature flags（默认不开启 Redis，需显式设置 APP_REDIS_ENABLED=true）
+app:
+  redis:
+    enabled: ${APP_REDIS_ENABLED:true}  # true 启用 Redis；false 或缺省则走本地内存降级
 
 # ─── MyBatis-Plus 配置 ──────────────────────────────────────────────────────
 mybatis-plus:
@@ -59,6 +68,7 @@ jwt:
   # ⚠️ 生产环境必须替换为随机高强度字符串（建议 64 位以上）
   expiration: 604800000        # Token 有效期：7 天（毫秒）
   refresh-expiration: 2592000000  # 刷新 Token 有效期：30 天（毫秒，预留）
+
 
 # ─── AI 解析：DeepSeek ────────────────────────────────────────────────────────
 # 用途：题目结构化解析、写作 AI 评分
