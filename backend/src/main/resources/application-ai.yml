@@ -1,0 +1,50 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# AI 解析相关配置（拆分文件）
+# 通过 spring.config.import 在 application.yml 中引入本文件
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ─── AI 解析：DeepSeek ────────────────────────────────────────────────────────
+# 用途：题目结构化解析、写作 AI 评分
+# 申请地址：https://platform.deepseek.com
+ai:
+  deepseek:
+    api-key:   #your_deepseek_api_key_here   # ⚠️ 填入你的 DeepSeek API Key
+    base-url: https://api.deepseek.com
+    model: deepseek-chat
+    max-tokens: 16384
+    text-max-chars: 30000   # 输入文本截断阈值，避免超出 Token 限制
+
+  precise:
+    provider: mimo
+
+# ─── AI 精准解析提供方选择 ─────────────────────────────────────────────────
+# 可选：mimo（默认，小米 MiMO，OpenAI 兼容）/ qwen（通义千问）
+# 说明：
+# - Qwen：通用视觉解析，表现稳定，默认选项。
+# - MiMO：对图表/表格/复杂版面场景（如雅思写作 Task1 的图表题）解析效果更佳，
+#         推荐优先用于包含大量图形、表格的数据密集型页面；首次调用可能较慢，建议适当提高超时配置。
+
+# ─── AI 解析：小米 MiMO（OpenAI 兼容）────────────────────────────────────────
+# 用途：与 OpenAI Chat Completions 兼容，支持多模态；
+#      对“图表/表格/数据可视化”类页面（如雅思写作 Task1 图表题）结构化提取更有优势
+# 使用方式：将 ai.precise.provider 设为 mimo 才会生效
+mimo:
+  api-key:    # 或用环境变量注入
+  base-url: https://api.xiaomimimo.com/v1
+  model: mimo-v2.5
+  ai-max-tokens: 8192
+
+# ─── AI 解析：通义千问 Qwen（精准解析）─────────────────────────────────────────
+# 用途：PDF 转图片后调用视觉模型解析，适合多栏/扫描版试卷；通用稳健
+# 申请地址：https://dashscope.aliyuncs.com（阿里云 DashScope）
+# 可用视觉模型（支持图片/PDF 识别）：
+#   - qwen3.6-plus           推荐，支持图片输入，有免费额度
+#   - 千问VL系列模型          支持图片输入，但没有免费额度
+qwen:
+  api-key:  #your_dashscope_api_key_here   # ⚠️ 填入你的 DashScope API Key
+  base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  model: qwen3.6-plus
+  ai-max-tokens: 8192
+  max-pages: 20         # 单次精准解析最大页数
+  render-dpi: 160       # PDF 渲染分辨率（DPI），越高越清晰但耗时更长
+  image-quality: 0.82   # 图片压缩质量（0~1），影响 API 传输体积

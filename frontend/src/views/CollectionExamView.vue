@@ -70,11 +70,11 @@
               <div v-if="currentVisual.chartType && currentVisual.chartType.toLowerCase().includes('bar')" ref="writeBarChartRef" class="wvp-chart-canvas"></div>
               <div v-if="currentVisual.chartType && currentVisual.chartType.toLowerCase().includes('pie')" ref="writePieChartRef" class="wvp-chart-canvas"></div>
             </div>
-            <div v-if="currentVisual.table.headers.length && currentVisual.table.rows.length" class="wvp-table-wrap">
-              <div v-if="currentVisual.table.title" class="wvp-table-title">{{ currentVisual.table.title }}</div>
+            <div v-for="(t, ti) in currentVisual.tables" :key="`cv-table-${ti}`" v-if="t.headers.length && t.rows.length" class="wvp-table-wrap">
+              <div v-if="t.title" class="wvp-table-title">{{ t.title }}</div>
               <table class="wvp-table">
-                <thead><tr><th v-for="(h, hi) in currentVisual.table.headers" :key="hi">{{ h }}</th></tr></thead>
-                <tbody><tr v-for="(row, ri) in currentVisual.table.rows" :key="ri"><td v-for="(cell, ci) in row" :key="ci">{{ cell }}</td></tr></tbody>
+                <thead><tr><th v-for="(h, hi) in t.headers" :key="`h-${ti}-${hi}`">{{ h }}</th></tr></thead>
+                <tbody><tr v-for="(row, ri) in t.rows" :key="`r-${ti}-${ri}`"><td v-for="(cell, ci) in row" :key="`c-${ti}-${ri}-${ci}`">{{ cell }}</td></tr></tbody>
               </table>
             </div>
           </div>
@@ -918,7 +918,7 @@ function buildWriteVisual(raw) {
     chartData = extractChartDataFromTable(table)
   }
 
-  return { hasVisual: chartData.length > 0 || table.rows.length > 0, chartType, summary, chartData, table }
+  return { hasVisual: chartData.length > 0 || table.rows.length > 0, chartType, summary, chartData, tables: table.rows.length ? [table] : [] }
 }
 
 function stripVisualBlocks(text) {

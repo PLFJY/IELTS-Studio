@@ -205,14 +205,6 @@
                     <button class="example-play-btn" @click="playExampleSentence" title="播放例句">🔊</button>
                   </div>
                 </div>
-                <button
-                  v-if="!wordStore.currentBook?.isDefault"
-                  class="card-action-btn add-btn"
-                  @click="doAddToDefault(activeSpellWord)"
-                  style="margin-top:8px"
-                >
-                  加入生词本
-                </button>
                 <button class="btn-primary spell-next-btn" @click="spellNext">
                   → 下一个
                 </button>
@@ -269,14 +261,19 @@
                 <button v-if="spellResult !== 'correct' && spellResult !== 'revealed'" class="spell-reveal-btn" @click="revealSpell">
                   显示答案
                 </button>
-                <button
-                  v-if="!wordStore.currentBook?.isDefault"
-                  class="card-action-btn add-btn"
-                  @click="doAddToDefault(wordStore.currentWord)"
-                  style="margin-top:8px"
-                >
-                  加入生词本
-                </button>
+              </div>
+              <!-- Outside add-to-wordbook (below card, centered) -->
+              <div class="outside-add-row">
+                <div class="card-actions center">
+                  <button
+                    v-if="!wordStore.currentBook?.isDefault"
+                    class="card-action-btn add-btn"
+                    @click="doAddToDefault((spellResult === 'correct' || spellResult === 'revealed') ? activeSpellWord : wordStore.currentWord)"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    加入生词本
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -1341,6 +1338,12 @@ onUnmounted(() => {
   color: var(--text-secondary);
 }
 
+/* Outside add row under spell card */
+.outside-add-row {
+  margin-top: 6px;
+}
+.outside-add-row .card-actions { justify-content: center; }
+
 /* Spell Mode */
 .spell-mode {
   display: flex;
@@ -1437,6 +1440,7 @@ onUnmounted(() => {
   border: 1.5px solid #D1E7DD;
   color: #1B4332;
   padding: 6px 16px;
+  margin-top: 20px;
   border-radius: var(--radius-full);
   font-size: 13px;
   font-weight: 500;
@@ -1452,6 +1456,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+  margin-top: 12px;
 }
 
 .spell-input-wrap {
@@ -1494,6 +1499,7 @@ onUnmounted(() => {
 .spell-reveal-btn {
   align-self: center;
   padding: 6px 16px;
+  margin-top: 20px;
   font-size: 13px;
   font-weight: 500;
   border-radius: var(--radius-full);
@@ -1983,6 +1989,7 @@ onUnmounted(() => {
   gap: 8px;
   margin-top: 4px;
 }
+.card-actions.center { justify-content: center; }
 .card-action-btn {
   display: inline-flex;
   align-items: center;
@@ -2021,6 +2028,16 @@ onUnmounted(() => {
 .entry-icon-btn.edit:hover { background: #F0F7F4; border-color: #1B4332; color: #1B4332; }
 .entry-icon-btn.add:hover  { background: #EFF6FF; border-color: #2563EB; color: #2563EB; }
 .entry-icon-btn.del:hover  { background: #FEF2F2; border-color: #EF4444; color: #EF4444; }
+
+/* Spell card bottom-centered footer */
+.spell-card, .spell-answer-card {
+  position: relative;
+  padding-bottom: 56px; /* space for footer buttons */
+}
+.spell-footer {
+  position: absolute;
+  left: 0; right: 0; bottom: 12px;
+}
 
 /* Edit hint */
 .edit-hint { font-size: 11px; color: var(--text-muted); margin-top: 4px; }

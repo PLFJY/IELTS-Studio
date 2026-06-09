@@ -631,8 +631,12 @@ export const useExamStore = defineStore('exam', () => {
     if (idx === -1) return
     let passage = ''
     let generatedWritingExamType = null
+    let parsedCharts = []
+    let parsedTables = []
     try {
       const parsed = examData.parseResult ? JSON.parse(examData.parseResult) : {}
+      if (Array.isArray(parsed.charts)) parsedCharts = parsed.charts
+      if (Array.isArray(parsed.tables)) parsedTables = parsed.tables
       if (Array.isArray(parsed.passages) && parsed.passages.length > 0) {
         if (parsed.passages.length === 1) {
           passage = parsed.passages[0] || ''
@@ -680,6 +684,8 @@ export const useExamStore = defineStore('exam', () => {
       id: `s${id}`,
       title: examData.title,
       passage,
+      charts: parsedCharts,
+      tables: parsedTables,
       questions: questions.map(q => {
         let options
         if (q.options) {
@@ -740,6 +746,8 @@ export const useExamStore = defineStore('exam', () => {
       questionCount: questions.length,
       type: hasWrite ? (generatedWritingExamType || 'writing') : (exams.value[idx].type || 'reading'),
       sections: [section],
+      charts: parsedCharts,
+      tables: parsedTables,
     }
   }
 

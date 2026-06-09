@@ -12,6 +12,8 @@ server:
 spring:
   application:
     name: ielts-studio-backend
+  config:
+    import: classpath:application-ai.yml
 
     # ─── 数据库连接（MySQL 8）────────────────────────────────────────────────────
   datasource:
@@ -69,32 +71,6 @@ jwt:
   expiration: 604800000        # Token 有效期：7 天（毫秒）
   refresh-expiration: 2592000000  # 刷新 Token 有效期：30 天（毫秒，预留）
 
-
-# ─── AI 解析：DeepSeek ────────────────────────────────────────────────────────
-# 用途：题目结构化解析、写作 AI 评分
-# 申请地址：https://platform.deepseek.com
-ai:
-  deepseek:
-    api-key:  #your_deepseek_api_key_here   # ⚠️ 填入你的 DeepSeek API Key
-    base-url: https://api.deepseek.com
-    model: deepseek-chat
-    max-tokens: 16384
-    text-max-chars: 30000   # 输入文本截断阈值，避免超出 Token 限制
-
-# ─── AI 解析：通义千问 Qwen（精准解析）─────────────────────────────────────────
-# 用途：PDF 转图片后调用视觉模型解析，适合多栏/扫描版试卷
-# 申请地址：https://dashscope.aliyuncs.com（阿里云 DashScope）
-# 可用视觉模型（支持图片/PDF 识别）：
-#   - qwen3.6-plus           推荐，支持图片输入，有免费额度
-#   - 千问VL系列模型          支持图片输入，但没有免费额度
-qwen:
-  api-key:  #your_dashscope_api_key_here   # ⚠️ 填入你的 DashScope API Key
-  base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
-  model: qwen3.6-plus
-  ai-max-tokens: 8192
-  max-pages: 20         # 单次精准解析最大页数
-  render-dpi: 160       # PDF 渲染分辨率（DPI），越高越清晰但耗时更长
-  image-quality: 0.82   # 图片压缩质量（0~1），影响 API 传输体积
 
 # ─── MinIO 对象存储（可选）──────────────────────────────────────────────────────
 # 当前版本文件以字节数组方式在内存中处理，MinIO 为预留扩展项

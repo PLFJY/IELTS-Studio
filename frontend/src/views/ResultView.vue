@@ -116,20 +116,33 @@
               <div v-if="passageVisual.hasVisual" class="result-visual-panel">
                 <div class="rvp-header">
                   <span class="rvp-title">📊 图表数据可视化</span>
-                  <span class="rvp-sub" v-if="passageVisual.chartType">{{ passageVisual.chartType }}</span>
+                  <div class="rvp-header-meta" v-if="activeVisualChart">
+                    <span class="rvp-chart-title" v-if="activeVisualChart.chartTitle">{{ activeVisualChart.chartTitle }}</span>
+                    <span class="rvp-sub" v-if="activeVisualChart.chartType">{{ activeVisualChart.chartType }}</span>
+                  </div>
                 </div>
-                <div v-if="passageVisual.summary.length" class="rvp-summary">
-                  <div class="rvp-summary-item" v-for="(s, i) in passageVisual.summary" :key="`sum-${i}`">{{ s }}</div>
+                <div v-if="passageVisual.segments.length > 1" class="rvp-tabs">
+                  <button
+                    v-for="(seg, segIdx) in passageVisual.segments"
+                    :key="`seg-${segIdx}`"
+                    :class="['rvp-tab', { active: segIdx === activeVisualIdx }]"
+                    @click="activeVisualIdx = segIdx"
+                  >
+                    {{ seg.chartTitle || `图表 ${segIdx + 1}` }}
+                  </button>
                 </div>
-                <div v-if="passageVisual.chartData.length" class="rvp-charts">
-                  <div v-if="passageVisual.chartType && passageVisual.chartType.toLowerCase().includes('bar')" ref="writeBarChartRef" class="rvp-chart-canvas"></div>
-                  <div v-if="passageVisual.chartType && passageVisual.chartType.toLowerCase().includes('pie')" ref="writePieChartRef" class="rvp-chart-canvas"></div>
+                <div v-if="activeVisualChart?.summary?.length" class="rvp-summary">
+                  <div class="rvp-summary-item" v-for="(s, i) in activeVisualChart.summary" :key="`sum-${i}`">{{ s }}</div>
                 </div>
-                <div v-if="passageVisual.table.headers.length && passageVisual.table.rows.length" class="rvp-table-wrap">
-                  <div v-if="passageVisual.table.title" class="rvp-table-title">{{ passageVisual.table.title }}</div>
+                <div v-if="activeVisualChart?.chartData?.length" class="rvp-charts">
+                  <div v-if="activeVisualChart.chartType && activeVisualChart.chartType.toLowerCase().includes('bar')" ref="writeBarChartRef" class="rvp-chart-canvas"></div>
+                  <div v-if="activeVisualChart.chartType && activeVisualChart.chartType.toLowerCase().includes('pie')" ref="writePieChartRef" class="rvp-chart-canvas"></div>
+                </div>
+                <div v-for="(t, ti) in (passageVisual.tables || [])" :key="`rvp-table-${ti}`" v-if="t && t.headers && t.rows && t.headers.length && t.rows.length" class="rvp-table-wrap">
+                  <div v-if="t.title" class="rvp-table-title">{{ t.title }}</div>
                   <table class="rvp-table">
-                    <thead><tr><th v-for="(h, hi) in passageVisual.table.headers" :key="hi">{{ h }}</th></tr></thead>
-                    <tbody><tr v-for="(row, ri) in passageVisual.table.rows" :key="ri"><td v-for="(cell, ci) in row" :key="ci">{{ cell }}</td></tr></tbody>
+                    <thead><tr><th v-for="(h, hi) in (t.headers || [])" :key="`h-${ti}-${hi}`">{{ h }}</th></tr></thead>
+                    <tbody><tr v-for="(row, ri) in (t.rows || [])" :key="`r-${ti}-${ri}`"><td v-for="(cell, ci) in (row || [])" :key="`c-${ti}-${ri}-${ci}`">{{ cell }}</td></tr></tbody>
                   </table>
                 </div>
               </div>
@@ -542,7 +555,14 @@ const rawPassageText = computed(() => {
   return ''
 })
 
-const passageVisual = computed(() => buildWriteVisual(rawPassageText.value))
+const passageVisual = computed(() => buildVisualPreferStructured(result.value, rawPassageText.value))
+const activeVisualIdx = ref(0)
+const activeVisualChart = computed(() => {
+  const segments = passageVisual.value?.segments || []
+  if (!segments.length) return null
+  const idx = Math.min(activeVisualIdx.value, segments.length - 1)
+  return segments[idx]
+})
 
 const passageParagraphs = computed(() => {
   if (result.value?.isCollection && result.value?.passages?.length) {
@@ -553,7 +573,9 @@ const passageParagraphs = computed(() => {
         isHeader: true,
         label: p.title || `试卷 ${passageIdx + 1}`,
       })
-      const raw = passageVisual.value?.hasVisual ? stripVisualBlocks(p.passage || '') : (p.passage || '')
+      const raw = passageVisual.value?.hasVisual
+        ? stripVisualBlocks(p.passage || '', passageVisual.value?.segments)
+        : (p.passage || '')
       raw.split('\n\n').filter(Boolean).forEach(para => {
         const parsed = extractParagraphLabel(para)
         const normalised = parsed.text.replace(/\n/g, ' ')
@@ -568,7 +590,9 @@ const passageParagraphs = computed(() => {
     return paragraphs
   }
   if (!rawPassageText.value) return []
-  const cleaned = passageVisual.value?.hasVisual ? stripVisualBlocks(rawPassageText.value) : rawPassageText.value
+  const cleaned = passageVisual.value?.hasVisual
+    ? stripVisualBlocks(rawPassageText.value, passageVisual.value?.segments)
+    : rawPassageText.value
   return cleaned.split('\n\n').filter(Boolean).map((para, idx) => {
     const markerMatch = para.match(PASSAGE_MARKER)
     const isHeader = !!markerMatch
@@ -691,36 +715,97 @@ function extractTaggedBlock(text, tag) {
 
 function buildWriteVisual(raw) {
   const text = (raw || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n')
-  const visualBlock = extractTaggedBlock(text, 'Visual Data Summary')
+  const segments = parseVisualSegments(text)
   const tableBlock = extractTaggedBlock(text, 'Table Data')
-  let chartType = ''
-  if (visualBlock) {
-    const line = visualBlock.split('\n').map(l => l.trim()).find(l => /chartType\s*[:：]/i.test(l))
-    if (line) chartType = line.replace(/.*chartType\s*[:：]\s*/i, '').trim()
-  }
-  const summary = visualBlock
-    ? visualBlock.split('\n').map(l => l.trim()).filter(Boolean)
-        .filter(l => !/^chartType\s*[:：]/i.test(l) && !/^chartTitle\s*[:：]/i.test(l))
-        .map(l => l.replace(/^[-*]\s*/, '')).slice(0, 5)
-    : []
   let tableTitle = ''
   if (tableBlock) {
     const titleLine = tableBlock.split('\n').map(l => l.trim()).find(l => /^tableTitle\s*[:：]/i.test(l))
     if (titleLine) tableTitle = titleLine.replace(/^tableTitle\s*[:：]\s*/i, '').trim()
   }
-  const tableLines = findLongestTableBlock(tableBlock || text)
+  // Only parse tables when a [Table Data] block exists; avoid mis-detecting pipes in series lines
+  const tableLines = findLongestTableBlock(tableBlock || '')
   const table = parseVisualTable(tableLines, tableTitle)
-  let chartData = extractVisualChartData(visualBlock || text)
-  if (!chartData.length && table.rows.length) chartData = extractChartDataFromTable(table)
-  return { hasVisual: chartData.length > 0 || table.rows.length > 0, chartType, summary, chartData, table }
+  if (!segments.length && table.rows.length) {
+    const fallbackData = extractChartDataFromTable(table)
+    if (fallbackData.length) {
+      segments.push({
+        chartTitle: table.title || 'Table Data',
+        chartType: 'table',
+        chartData: fallbackData,
+        summary: table.rows.map(row => row.join(' • ')).slice(0, 6),
+        removalLines: [],
+      })
+    }
+  }
+  const hasVisual = segments.some(seg => seg.chartData?.length) || table.rows.length > 0
+  return { hasVisual, segments, tables: table.rows.length ? [table] : [] }
 }
 
-function stripVisualBlocks(text) {
+// Prefer backend structured charts/tables, fallback to text parsing
+function buildVisualPreferStructured(res, rawText) {
+  const charts = res?.charts || []
+  const tables = res?.tables || []
+  if (charts.length || tables.length) {
+    const segs = []
+    for (const c of charts) {
+      const type = String(c.type || '').toLowerCase()
+      const title = c.title || ''
+      if (type.includes('pie')) {
+        const s0 = (c.series && c.series[0]) ? c.series[0] : { data: [] }
+        const data = (s0.data || []).map(d => ({ label: String(d.label ?? d.name ?? ''), value: Number(d.value) || 0 }))
+        segs.push({ chartTitle: title, chartType: 'pie chart', chartData: data, summary: [], removalLines: [], meta: { structured: true } })
+      } else if (type.includes('bar') || type.includes('line')) {
+        // Flatten structured multi-series into heuristic-friendly labels for existing renderer
+        const series = Array.isArray(c.series) ? c.series : []
+        const flat = []
+        for (const s of series) {
+          const name = String(s.name || 'value')
+          const arr = Array.isArray(s.data) ? s.data : []
+          for (const dp of arr) {
+            const x = (dp && (dp.x != null)) ? dp.x : (dp?.label ?? '')
+            const xStr = String(x)
+            flat.push({ label: `${/^\d{4}$/.test(xStr) ? xStr + ' ' + name : name + ' ' + xStr}`, value: Number(dp?.value) || 0 })
+          }
+        }
+        segs.push({ chartTitle: title, chartType: type.includes('line') ? 'line graph' : 'bar chart', chartData: flat, summary: [], removalLines: [], meta: { structured: true } })
+      }
+    }
+    // For tables: return all
+    const tableObjs = tables.map(t => ({
+      title: String(t.title || ''),
+      headers: Array.isArray(t.headers) ? t.headers : [],
+      rows: Array.isArray(t.rows) ? t.rows : [],
+    })).filter(t => t.headers.length && t.rows.length)
+    return { hasVisual: Boolean(segs.length || tableObjs.length), segments: segs, tables: tableObjs }
+  }
+  // Fallback to legacy text parsing
+  return buildWriteVisual(rawText)
+}
+
+function stripVisualBlocks(text, segments = []) {
   if (!text) return ''
-  return text
-    .replace(/\n?\[Visual Data Summary\][\s\S]*?(?=\n\[[^\]]+\]|\n\n【|$)/i, '\n')
-    .replace(/\n?\[Table Data\][\s\S]*?(?=\n\[[^\]]+\]|\n\n【|$)/i, '\n')
-    .replace(/\n{3,}/g, '\n\n').trim()
+  let cleaned = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+    .replace(/\n?\[Visual Data Summary\][\s\S]*?(?=\n\[[^\]]+\]|\n\n【|$)/gi, '\n')
+    .replace(/\n?\[Table Data\][\s\S]*?(?=\n\[[^\]]+\]|\n\n【|$)/gi, '\n')
+  if (segments?.length) {
+    const removal = new Set()
+    segments.forEach(seg => {
+      seg?.removalLines?.forEach(line => {
+        const trimmed = String(line || '').trim()
+        if (trimmed) removal.add(trimmed)
+      })
+    })
+    removal.forEach(line => {
+      const escaped = line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      cleaned = cleaned.replace(new RegExp(`(^|\\n)${escaped}(?=\\n|$)`, 'gi'), '\n')
+    })
+  }
+  // Fallback: remove any remaining chart meta/data-like lines to avoid泄漏到正文
+  cleaned = cleaned
+    .replace(/(^|\n)\s*chartTitle\s*[:：].*(?=\n|$)/gi, '\n')
+    .replace(/(^|\n)\s*chartType\s*[:：].*(?=\n|$)/gi, '\n')
+    .replace(/(^|\n)\s*[^\n:]{1,120}:\s*-?\d+(?:\.\d+)?(?:\s*(%|percent|percentage|million|millions|billion|billions|thousand|thousands|hundred|hundreds|m|k|bn).*)?(?=\n|$)/gi, '\n')
+  return cleaned.replace(/\n{3,}/g, '\n\n').trim()
 }
 
 function isMarkdownTableLine(line) {
@@ -757,17 +842,161 @@ function parseVisualTable(tableLines, tableTitle = '') {
   return { headers: rows[0], rows: rows.slice(1).filter(r => !isSep(r)), title: tableTitle }
 }
 
-function extractVisualChartData(text) {
-  if (!text) return []
-  const items = []
-  const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
-  for (const line of lines) {
-    const m = line.match(/^(.+?)\s*[:：]\s*([\d.]+)\s*%?$/i)
-    if (m && !/chartType|tableTitle|chartTitle/i.test(m[1])) {
-      items.push({ label: m[1].trim(), value: parseFloat(m[2]) })
+function parseVisualSegments(text) {
+  const normalized = (text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  const lines = normalized.split('\n')
+  const segments = []
+  let current = null
+
+  const flush = () => {
+    if (!current) return
+    if (!current.data.length) { current = null; return }
+    segments.push({
+      chartTitle: current.title,
+      chartType: current.type,
+      chartData: current.data.map(d => ({ label: d.label, value: d.value, unit: d.unit })),
+      summary: current.summary.slice(0, 8),
+      removalLines: [...current.removalLines],
+      meta: { xAxis: current.xAxis || '', yAxis: current.yAxis || '', series: current.seriesDecl ? [...current.seriesDecl] : [] },
+    })
+    current = null
+  }
+
+  const ensureCurrent = (hintTitle = '') => {
+    if (!current) {
+      current = {
+        title: hintTitle || '',
+        type: '',
+        summary: [],
+        data: [],
+        removalLines: [],
+        unitType: '',
+        xAxis: '',
+        yAxis: '',
+        seriesDecl: null,
+      }
+    }
+    if (hintTitle && !current.title) current.title = hintTitle
+    return current
+  }
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim()
+    if (!line) continue
+    if (/^\[table data\]/i.test(line)) { flush(); continue }
+    if (/^\[visual data summary\]/i.test(line)) { continue }
+    if (/^chartTitle\s*[:：]/i.test(line)) {
+      flush()
+      current = ensureCurrent(line.replace(/^chartTitle\s*[:：]\s*/i, '').trim())
+      current.removalLines.push(line)
+      continue
+    }
+    if (!current) continue
+    if (/^chartType\s*[:：]/i.test(line)) {
+      current.type = line.replace(/^chartType\s*[:：]\s*/i, '').trim()
+      current.removalLines.push(line)
+      continue
+    }
+    if (/^xAxis\s*[:：]/i.test(line)) {
+      current.xAxis = line.replace(/^xAxis\s*[:：]\s*/i, '').trim().toLowerCase()
+      current.removalLines.push(line)
+      continue
+    }
+    if (/^yAxis\s*[:：]/i.test(line)) {
+      current.yAxis = line.replace(/^yAxis\s*[:：]\s*/i, '').trim().toLowerCase()
+      current.removalLines.push(line)
+      continue
+    }
+    if (/^\|?\s*series\s*[:：]/i.test(line)) {
+      const raw = line.replace(/^\|?\s*series\s*[:：]\s*/i, '').replace(/\|/g, ' ').trim()
+      const parts = raw.split(/[\s]*[|][\s]*|\s+/).filter(Boolean)
+      const list = parts.length > 1 ? parts : raw.split(/\s*\|\s*/).filter(Boolean)
+      current.seriesDecl = list.map(s => s.trim())
+      current.removalLines.push(line)
+      continue
+    }
+    if (/^\[.+\]/.test(line)) continue
+    const parsed = parseVisualDataLine(line)
+    if (parsed) {
+      const unitType = classifyUnit(parsed.unit)
+      if (current.unitType && unitType && current.unitType !== unitType && current.data.length >= 2) {
+        flush()
+        current = ensureCurrent(guessTitleFromLabel(parsed.label))
+      }
+      ensureCurrent(guessTitleFromLabel(parsed.label))
+      if (!current.unitType && unitType) current.unitType = unitType
+      current.data.push(parsed)
+      current.removalLines.push(line)
+    } else if (line) {
+      current.summary.push(line.replace(/^[ -*]\s*/, ''))
     }
   }
-  return items
+  flush()
+  return segments
+}
+
+function parseVisualDataLine(line) {
+  if (/^\|?\s*series\s*[:：]/i.test(line)) return null
+  const match = line.match(/^([^:]+):\s*(-?\d+(?:\.\d+)?)(.*)$/)
+  if (!match) return null
+  let label = match[1].trim()
+  const value = parseFloat(match[2])
+  if (!label || Number.isNaN(value)) return null
+  const unit = match[3].trim()
+  // Normalise label: "Name (1970)" -> "1970 Name"
+  label = label.replace(/\((\d{4})\)/, '$1').replace(/^\s+|\s+$/g, '')
+  label = label.replace(/^(.*)\s(\d{4})$/, '$2 $1')
+  return { label, value, unit }
+}
+
+function classifyUnit(unit = '') {
+  const lower = unit.toLowerCase()
+  if (/%|percent|percentage/.test(lower)) return 'percent'
+  return 'count'
+}
+
+function guessTitleFromLabel(label = '') {
+  const lower = label.toLowerCase()
+  if (/marriage|divorce/.test(lower)) return 'Marriages & Divorces'
+  if (/never married|widowed|divorced/.test(lower)) return 'Marital Status Distribution'
+  return ''
+}
+
+function buildGroupedFromChart(seg) {
+  const items = (seg?.chartData || []).map(d => ({ label: String(d.label || ''), value: Number(d.value) }))
+  // Try Year First pattern: "YYYY Name"
+  const yearCat = items.map(it => {
+    const m = it.label.match(/^(\d{4})\s+(.+)$/)
+    return m ? { year: m[1], cat: m[2].trim(), value: it.value } : null
+  }).filter(Boolean)
+  if (yearCat.length >= 4) {
+    const years = Array.from(new Set(yearCat.map(p => p.year))).sort()
+    const cats = Array.from(new Set(yearCat.map(p => p.cat)))
+    if (years.length >= 2 && cats.length >= 2) {
+      const series = cats.map(cat => ({ name: cat, type: 'bar', data: years.map(y => {
+        const rec = yearCat.find(p => p.year === y && p.cat === cat)
+        return rec ? rec.value : 0
+      }) }))
+      return { x: years, legend: cats, series }
+    }
+  }
+  // Try Category First pattern: "Category YYYY"
+  const catYear = items.map(it => {
+    const m = it.label.match(/^(.+?)\s(\d{4})$/)
+    return m ? { cat: m[1].trim(), year: m[2], value: it.value } : null
+  }).filter(Boolean)
+  if (catYear.length >= 4) {
+    const cats = Array.from(new Set(catYear.map(p => p.cat)))
+    const years = Array.from(new Set(catYear.map(p => p.year))).sort()
+    if (years.length >= 2 && cats.length >= 2) {
+      const series = years.map(year => ({ name: year, type: 'bar', data: cats.map(c => {
+        const rec = catYear.find(p => p.year === year && p.cat === c)
+        return rec ? rec.value : 0
+      }) }))
+      return { x: cats, legend: years, series }
+    }
+  }
+  return null
 }
 
 function extractChartDataFromTable(table) {
@@ -786,8 +1015,9 @@ function disposeWriteCharts() {
 }
 
 function renderWriteCharts() {
-  const data = passageVisual.value?.chartData || []
-  const chartType = (passageVisual.value?.chartType || '').toLowerCase()
+  const seg = activeVisualChart.value
+  const data = seg?.chartData || []
+  const chartType = (activeVisualChart.value?.chartType || '').toLowerCase()
   if (!data.length) { disposeWriteCharts(); return }
   const shouldRenderBar = chartType.includes('bar')
   const shouldRenderPie = chartType.includes('pie')
@@ -795,13 +1025,19 @@ function renderWriteCharts() {
 
   if (shouldRenderBar && writeBarChartRef.value) {
     if (!writeBarChart) writeBarChart = echarts.init(writeBarChartRef.value)
+    const grouped = buildGroupedFromChart(seg)
     writeBarChart.setOption({
       animationDuration: 450, color: ['#4AA36F'],
       grid: { left: 12, right: 12, top: 28, bottom: 36, containLabel: true },
       tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-      xAxis: { type: 'category', data: data.map(d => d.label), axisLabel: { color: '#475569', fontSize: 11, interval: 0, rotate: data.length > 4 ? 25 : 0 }, axisTick: { alignWithLabel: true } },
-      yAxis: { type: 'value', axisLabel: { color: '#64748B', fontSize: 11 }, splitLine: { lineStyle: { color: '#E2E8F0' } } },
-      series: [{ type: 'bar', data: data.map(d => Number(d.value) || 0), barMaxWidth: 28, itemStyle: { borderRadius: [6, 6, 0, 0] } }],
+      legend: grouped ? { top: 0, textStyle: { color: '#475569', fontSize: 11 } } : undefined,
+      xAxis: grouped
+        ? { type: 'category', data: grouped.x, axisLabel: { color: '#475569', fontSize: 11, interval: 0, rotate: grouped.x.length > 4 ? 25 : 0 }, axisTick: { alignWithLabel: true } }
+        : { type: 'category', data: data.map(d => d.label), axisLabel: { color: '#475569', fontSize: 11, interval: 0, rotate: data.length > 4 ? 25 : 0 }, axisTick: { alignWithLabel: true } },
+      yAxis: { type: 'value', name: (seg?.meta?.yAxis || '').toUpperCase(), nameTextStyle: { color: '#64748B' }, axisLabel: { color: '#64748B', fontSize: 11 }, splitLine: { lineStyle: { color: '#E2E8F0' } } },
+      series: grouped
+        ? grouped.series.map(s => ({ ...s, barMaxWidth: 28, itemStyle: { borderRadius: [6, 6, 0, 0] } }))
+        : [{ type: 'bar', data: data.map(d => Number(d.value) || 0), barMaxWidth: 28, itemStyle: { borderRadius: [6, 6, 0, 0] } }],
     }, true)
   }
 
@@ -823,13 +1059,26 @@ function renderWriteCharts() {
 }
 
 watch(
-  () => [showPassage.value, passageVisual.value?.chartData?.map(i => `${i.label}:${i.value}`).join('|')],
+  () => [
+    showPassage.value,
+    activeVisualIdx.value,
+    (activeVisualChart.value?.chartType || '').toLowerCase(),
+    activeVisualChart.value?.chartData?.map(i => `${i.label}:${i.value}`).join('|'),
+  ],
   async () => {
     if (!showPassage.value) return
     await nextTick()
     requestAnimationFrame(() => renderWriteCharts())
   },
   { immediate: true }
+)
+
+watch(
+  () => passageVisual.value?.segments?.length || 0,
+  () => {
+    activeVisualIdx.value = 0
+    disposeWriteCharts()
+  }
 )
 
 // ── Translate overlay ──────────────────────────────────────
@@ -1360,10 +1609,22 @@ onMounted(() => {
   gap: 10px;
   margin-bottom: 12px;
 }
+.rvp-header-meta {
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-end;
+}
 .rvp-title {
   font-weight: 700;
   font-size: 14px;
   color: #1B4332;
+}
+.rvp-chart-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #14532D;
 }
 .rvp-sub {
   font-size: 12px;
@@ -1371,6 +1632,27 @@ onMounted(() => {
   background: #D4F5E9;
   border-radius: 12px;
   padding: 2px 10px;
+}
+.rvp-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.rvp-tab {
+  border: 1px solid #CFE9DA;
+  background: #fff;
+  color: #2D6A4F;
+  font-size: 12px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.rvp-tab.active {
+  background: #2D6A4F;
+  color: #fff;
+  border-color: #1B4332;
 }
 .rvp-summary {
   display: flex;

@@ -456,6 +456,18 @@ export const useWordStore = defineStore('word', () => {
         delete _pollEntriesTimers[bookId]
         return
       }
+      // If book status is no longer processing, stop polling early
+      try {
+        await _refreshBookMeta(bookId)
+        const book = books.value.find(b => b.id === bookId)
+        if (book && book.status && book.status !== 'processing') {
+          clearInterval(_pollEntriesTimers[bookId])
+          delete _pollEntriesTimers[bookId]
+          // If active book, ensure latest entries are loaded once
+          if (currentBookId.value === bookId) await loadEntries(bookId)
+          return
+        }
+      } catch { /* ignore meta refresh errors */ }
       if (currentBookId.value === bookId) {
         await loadEntries(bookId)
         const idx = books.value.findIndex(b => b.id === bookId)

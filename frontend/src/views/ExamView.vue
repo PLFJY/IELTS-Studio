@@ -56,39 +56,44 @@
         </div>
         <!-- Write task: structured layout -->
         <div v-if="isWriteSection" class="write-task-body" :style="{ fontSize: fontSize + 'px' }">
+          <div v-html="renderWritePassage(writePassageDisplay)"></div>
+
           <div v-if="writeVisual.hasVisual" class="write-visual-panel">
             <div class="wvp-header">
               <div class="wvp-title">📊 图表数据可视化</div>
-              <div class="wvp-sub" v-if="writeVisual.chartType">{{ writeVisual.chartType }}</div>
             </div>
+
+            <!-- Write instruction shown above charts (left side) -->
+            <div v-if="leftWriteInstruction" class="write-instruction" v-html="renderMd(escapeHtml(leftWriteInstruction))" style="margin: 8px 0 12px;"></div>
 
             <div v-if="writeVisual.summary.length" class="wvp-summary">
               <div class="wvp-summary-item" v-for="(s, i) in writeVisual.summary" :key="`sum-${i}`">{{ s }}</div>
             </div>
 
-            <div v-if="writeVisual.chartData.length" class="wvp-charts">
-              <div v-if="writeVisual.chartType && writeVisual.chartType.toLowerCase().includes('bar')" ref="writeBarChartRef" class="wvp-chart-canvas"></div>
-              <div v-if="writeVisual.chartType && writeVisual.chartType.toLowerCase().includes('pie')" ref="writePieChartRef" class="wvp-chart-canvas"></div>
+            <div class="wvp-charts">
+              <div v-for="(seg, sIdx) in (writeVisual.segments || [])" :key="`wvp-chart-${sIdx}`" class="wvp-chart-wrap">
+                <div class="wvp-summary-item" v-if="seg.chartTitle">{{ seg.chartTitle }}</div>
+                <div v-if="seg.chartType && seg.chartType.toLowerCase().includes('bar')" :ref="el => setBarRef(sIdx, el)" class="wvp-chart-canvas"></div>
+                <div v-if="seg.chartType && seg.chartType.toLowerCase().includes('pie')" :ref="el => setPieRef(sIdx, el)" class="wvp-chart-canvas"></div>
+              </div>
             </div>
 
-            <div v-if="writeVisual.table.headers.length && writeVisual.table.rows.length" class="wvp-table-wrap">
-              <div v-if="writeVisual.table.title" class="wvp-table-title">{{ writeVisual.table.title }}</div>
+            <div v-for="(t, tIdx) in (writeVisual.tables || [])" :key="`wvp-table-${tIdx}`" v-if="t && t.headers && t.headers.length && t.rows && t.rows.length" class="wvp-table-wrap">
+              <div v-if="t.title" class="wvp-table-title">{{ t.title }}</div>
               <table class="wvp-table">
                 <thead>
                   <tr>
-                    <th v-for="(h, idx) in writeVisual.table.headers" :key="`h-${idx}`">{{ h }}</th>
+                    <th v-for="(h, idx) in (t.headers || [])" :key="`h-${tIdx}-${idx}`">{{ h }}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="(row, rIdx) in writeVisual.table.rows" :key="`r-${rIdx}`">
-                    <td v-for="(cell, cIdx) in row" :key="`c-${rIdx}-${cIdx}`">{{ cell }}</td>
+                  <tr v-for="(row, rIdx) in (t.rows || [])" :key="`r-${tIdx}-${rIdx}`">
+                    <td v-for="(cell, cIdx) in (row || [])" :key="`c-${tIdx}-${rIdx}-${cIdx}`">{{ cell }}</td>
                   </tr>
                 </tbody>
               </table>
             </div>
           </div>
-
-          <div v-html="renderWritePassage(writePassageDisplay)"></div>
         </div>
         <!-- Reading passage: normal paragraphs -->
         <div v-else class="passage-body" :style="{ fontSize: fontSize + 'px' }">
@@ -126,10 +131,10 @@
           </div>
         </div>
         <div class="questions-inner" ref="questionsRef">
-          <template v-for="(question, qIdx) in currentSection?.questions" :key="question.id">
+          <template v-for="(question, qIdx) in displayQuestions" :key="question.id">
             <!-- Passage section divider on right side -->
             <div
-              v-if="qIdx === 0 || getQuestionPassageLabel(question) !== getQuestionPassageLabel(currentSection.questions[qIdx - 1])"
+              v-if="qIdx === 0 || getQuestionPassageLabel(question) !== getQuestionPassageLabel(displayQuestions[qIdx - 1])"
               class="q-passage-divider"
             >
               <span class="q-passage-label">📄 {{ getQuestionPassageLabel(question) || '文章' }}</span>
@@ -284,7 +289,7 @@
         </div>
         <div class="sheet-grid">
           <button
-            v-for="q in currentSection?.questions"
+            v-for="q in displayQuestions"
             :key="q.id"
             class="sheet-num"
             :class="{
@@ -512,20 +517,50 @@ const isWriteSection = computed(() => {
   console.log('[isWriteSection] questions:', questions, 'result:', result)
   return result
 })
+// Filter questions: if passage has no explicit WRITING TASK 2 marker, drop spurious Task2 items
+const displayQuestions = computed(() => {
+  const qs = currentSection.value?.questions || []
+  if (!qs.length) return []
+  // only apply to write sections
+  const passage = String(currentSection.value?.passage || '').toUpperCase()
+  const hasTask2Marker = /WRITING\s+TASK\s*2/.test(passage)
+  if (hasTask2Marker) return qs
+  // keep Task1; remove Task2 write questions that look synthetic
+  return qs.filter(q => !(q?.type === 'write' && String(q?.taskType).toLowerCase() === 'task2'))
+})
+// Left-side instruction: prefer Task1 question text; fallback to section passage; strip visual blocks
+const leftWriteInstruction = computed(() => {
+  if (!isWriteSection.value) return ''
+  const qs = currentSection.value?.questions || []
+  const task1 = qs.find(q => q?.type === 'write' && (String(q?.taskType).toLowerCase() === 'task1' || q?.questionNumber === 1))
+  const source = String(task1?.text || currentSection.value?.passage || '')
+  return stripVisualBlocks(source)
+})
 const writeVisual = computed(() => {
-  const raw = currentSection.value?.passage || ''
+  const section = currentSection.value
+  const raw = section?.passage || ''
+  const structured = buildWriteVisualPreferStructured(section, exam.value)
+  if (structured?.hasVisual) return structured
   const result = buildWriteVisual(raw)
-  console.log('[writeVisual] passage length:', raw.length, 'hasVisual:', result.hasVisual, 'chartData:', result.chartData)
+  console.log('[writeVisual] (fallback text) passage length:', raw.length, 'hasVisual:', result.hasVisual, 'chartData:', result.chartData)
   return result
 })
+// Multiple chart refs (per segment)
+const barRefs = ref([])
+const pieRefs = ref([])
+const setBarRef = (idx, el) => { barRefs.value[idx] = el }
+const setPieRef = (idx, el) => { pieRefs.value[idx] = el }
 const writePassageDisplay = computed(() => {
   const raw = currentSection.value?.passage || ''
-  return writeVisual.value?.hasVisual ? stripVisualBlocks(raw) : raw
+  if (!writeVisual.value?.hasVisual) return raw
+  // Remove Visual/Table blocks first
+  let txt = stripVisualBlocks(raw)
+  // Also remove [Task Prompt] block from the left passage to avoid duplication
+  txt = txt.replace(/\n?\[Task Prompt\][\s\S]*?(?=\n\[[^\]]+\]|$)/i, '\n')
+  return txt.replace(/\n{3,}/g, '\n\n').trim()
 })
-const writeBarChartRef = ref(null)
-const writePieChartRef = ref(null)
-let writeBarChart = null
-let writePieChart = null
+let barCharts = []
+let pieCharts = []
 
 function buildWriteVisual(raw) {
   const text = (raw || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n')
@@ -543,7 +578,8 @@ function buildWriteVisual(raw) {
     }
   }
 
-  const tableLines = findLongestTableBlock(tableBlock || text)
+  // Only parse tables when a [Table Data] block exists; avoid mis-detecting pipes in series lines
+  const tableLines = findLongestTableBlock(tableBlock || '')
   const table = parseVisualTable(tableLines, tableTitle)
 
   let chartResult = extractChartData(visualBlock || text)
@@ -556,21 +592,92 @@ function buildWriteVisual(raw) {
     chartData = extractChartDataFromTable(table)
   }
 
+  const segments = chartData.length ? [{ chartType, chartTitle, chartData }] : []
   return {
     hasVisual: chartData.length > 0 || table.rows.length > 0,
     chartType,
     summary,
     chartData,
     chartTitle,
-    table,
+    tables: table.rows.length ? [table] : [],
+    segments,
+  }
+}
+
+// Prefer backend structured charts/tables from section/exam; fallback to text parsing
+function buildWriteVisualPreferStructured(section, examObj) {
+  const secCharts = Array.isArray(section?.charts) ? section.charts : []
+  const secTables = Array.isArray(section?.tables) ? section.tables : []
+  const topCharts = Array.isArray(examObj?.charts) ? examObj.charts : []
+  const topTables = Array.isArray(examObj?.tables) ? examObj.tables : []
+  const charts = secCharts.length ? secCharts : topCharts
+  const tables = secTables.length ? secTables : topTables
+  if (!charts.length && !tables.length) return { hasVisual: false, chartType: '', summary: [], chartData: [], chartTitle: '', segments: [], tables: [] }
+
+  // Build segments from all charts
+  const hasData = (c) => {
+    const series = Array.isArray(c?.series) ? c.series : []
+    for (const s of series) {
+      const arr = Array.isArray(s?.data) ? s.data : []
+      if (arr.some(d => d && (Number(d.value) || Number(d.y) || Number(d.v)) && !isNaN(Number(d.value ?? d.y ?? d.v)))) return true
+    }
+    return false
+  }
+  // dedupe by title, keep the one with data
+  const byTitle = new Map()
+  for (const c of charts) {
+    const key = String(c.title || '').trim()
+    if (!byTitle.has(key)) {
+      byTitle.set(key, c)
+    } else {
+      const prev = byTitle.get(key)
+      if (!hasData(prev) && hasData(c)) byTitle.set(key, c)
+    }
+  }
+  const cleanedCharts = [...byTitle.values()].filter(hasData)
+  const segments = cleanedCharts.map((c) => {
+    const type = String(c.type || '').toLowerCase()
+    const chartType = type.includes('pie') ? 'pie chart' : (type.includes('line') ? 'line graph' : 'bar chart')
+    const seriesArr = Array.isArray(c?.series) ? c.series : []
+    const s0 = seriesArr[0] || { data: [] }
+    const data0 = Array.isArray(s0.data) ? s0.data : []
+    const chartData = data0.map(d => ({ label: String(d.label ?? d.name ?? ''), value: Number(d.value) || 0 }))
+    const categories = Array.isArray(c?.dimensions?.categories) ? c.dimensions.categories : chartData.map(d => d.label)
+    const fullSeries = seriesArr.map(s => ({ name: s?.name || '', data: Array.isArray(s?.data) ? s.data : [] }))
+    return { chartTitle: c.title || '', chartType, chartData, categories, series: fullSeries }
+  })
+  const summary = cleanedCharts.slice(1).map(x => x.title || '')
+
+  const tableObjs = tables.map((t) => ({
+    title: String(t.title || ''),
+    headers: Array.isArray(t.headers) ? t.headers : [],
+    rows: Array.isArray(t.rows) ? t.rows : [],
+  })).filter(t => t.headers.length && t.rows.length)
+  const first = segments[0] || { chartType: '', chartTitle: '', chartData: [] }
+  return {
+    hasVisual: Boolean(segments.some(s => s.chartData.length) || tableObjs.length),
+    chartType: first.chartType,
+    chartData: first.chartData,
+    chartTitle: first.chartTitle,
+    segments,
+    summary,
+    tables: tableObjs,
   }
 }
 
 function stripVisualBlocks(text) {
   if (!text) return ''
-  return text
+  const removedTags = text
     .replace(/\n?\[Visual Data Summary\][\s\S]*?(?=\n\[[^\]]+\]|$)/i, '\n')
     .replace(/\n?\[Table Data\][\s\S]*?(?=\n\[[^\]]+\]|$)/i, '\n')
+  // If visual has been structured, also strip inline chart hints (chartTitle/chartType/xAxis/yAxis/series/data rows)
+  return removedTags
+    .split('\n')
+    .filter(line => !/^(chartTitle|chartType|xAxis|yAxis|series)\s*[:：]/i.test(line.trim()))
+    .filter(line => !/^[-–—]{2,}\s*chartTitle/i.test(line.trim()))
+    .filter(line => !/^\d{4}\b/.test(line.trim()))
+    .filter(line => !/^[A-Za-z].+?:\s*-?\d+(?:\.\d+)?/.test(line.trim()))
+    .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
 }
@@ -580,6 +687,26 @@ function extractTaggedBlock(text, tag) {
   const re = new RegExp(`\\[${escaped}\\]([\\s\\S]*?)(?=\\n\\[[^\\]]+\\]|$)`, 'i')
   const m = text.match(re)
   return m ? m[1].trim() : ''
+}
+
+function logVisualDebug(label) {
+  const sec = currentSection.value
+  const charts = sec?.charts || exam.value?.charts || []
+  const tables = sec?.tables || exam.value?.tables || []
+  // avoid huge logs by shallow copy of series lengths
+  const chartBrief = charts.map(c => ({ title: c.title, type: c.type, seriesLens: (c.series || []).map(s => ({ name: s.name, len: Array.isArray(s.data) ? s.data.length : 0 })) }))
+  // writeVisual segments summary
+  const segs = writeVisual.value?.segments || []
+  const segBrief = segs.map(s => ({ title: s.chartTitle, type: s.chartType, len: (s.chartData || []).length }))
+  // eslint-disable-next-line no-console
+  console.log('[writeVisual debug]', label, {
+    sectionCharts: chartBrief,
+    tablesLen: tables.length,
+    segments: segBrief,
+    rawSegments: segs,
+    rawSectionCharts: charts,
+    rawSectionTables: tables,
+  })
 }
 
 function extractChartType(text) {
@@ -836,160 +963,85 @@ function normalizeChartData(items) {
 }
 
 function disposeWriteCharts() {
-  if (writeBarChart) {
-    writeBarChart.dispose()
-    writeBarChart = null
-  }
-  if (writePieChart) {
-    writePieChart.dispose()
-    writePieChart = null
-  }
+  if (barCharts?.length) barCharts.forEach(ch => { try { ch?.dispose?.() } catch(e){} })
+  if (pieCharts?.length) pieCharts.forEach(ch => { try { ch?.dispose?.() } catch(e){} })
+  barCharts = []
+  pieCharts = []
 }
 
 function renderWriteCharts() {
-  const data = writeVisual.value?.chartData || []
-  const chartType = (writeVisual.value?.chartType || '').toLowerCase()
-  console.log('[renderWriteCharts] isWriteSection:', isWriteSection.value, 'data.length:', data.length, 'chartType:', chartType)
-  console.log('[renderWriteCharts] writeBarChartRef:', writeBarChartRef.value, 'writePieChartRef:', writePieChartRef.value)
-  if (!isWriteSection.value || !data.length) {
-    console.log('[renderWriteCharts] Early return: isWriteSection or data check failed')
-    disposeWriteCharts()
-    return
-  }
-
-  // Only check refs for charts that will be rendered based on chartType
-  const shouldRenderBar = chartType.includes('bar')
-  const shouldRenderPie = chartType.includes('pie')
-  
-  console.log('[renderWriteCharts] shouldRenderBar:', shouldRenderBar, 'shouldRenderPie:', shouldRenderPie)
-  
-  if (shouldRenderBar && !writeBarChartRef.value) {
-    console.log('[renderWriteCharts] Bar chart ref not ready, skipping bar chart')
-  }
-  if (shouldRenderPie && !writePieChartRef.value) {
-    console.log('[renderWriteCharts] Pie chart ref not ready, skipping pie chart')
-  }
-  if (!shouldRenderBar && !shouldRenderPie) {
-    console.log('[renderWriteCharts] No charts to render')
-    return
-  }
-
-  if (shouldRenderBar) {
-    if (!writeBarChart) writeBarChart = echarts.init(writeBarChartRef.value)
-    console.log('[renderWriteCharts] Bar chart initialized')
-  }
-  if (shouldRenderPie) {
-    if (!writePieChart) writePieChart = echarts.init(writePieChartRef.value)
-    console.log('[renderWriteCharts] Pie chart initialized')
-  }
-  
-  // Log container dimensions for debugging
-  if (writeBarChartRef.value) {
-    console.log('[renderWriteCharts] Bar chart container dimensions:', {
-      offsetWidth: writeBarChartRef.value.offsetWidth,
-      offsetHeight: writeBarChartRef.value.offsetHeight,
-      clientWidth: writeBarChartRef.value.clientWidth,
-      clientHeight: writeBarChartRef.value.clientHeight
-    })
-  }
-  if (writePieChartRef.value) {
-    console.log('[renderWriteCharts] Pie chart container dimensions:', {
-      offsetWidth: writePieChartRef.value.offsetWidth,
-      offsetHeight: writePieChartRef.value.offsetHeight,
-      clientWidth: writePieChartRef.value.clientWidth,
-      clientHeight: writePieChartRef.value.clientHeight
-    })
-  }
-
-  const labels = data.map(d => d.label)
-  const values = data.map(d => Number(d.value) || 0)
-  const colorPalette = ['#2E8B57', '#3CAEA3', '#F6C85F', '#F08A5D', '#6A89CC', '#B8DE6F', '#7DCEA0', '#5DADE2']
-
-  if (shouldRenderBar && writeBarChart) {
-    writeBarChart.setOption({
-      animationDuration: 450,
-      color: ['#4AA36F'],
-      grid: { left: 12, right: 12, top: 28, bottom: 36, containLabel: true },
-      tooltip: {
-        trigger: 'axis',
-        axisPointer: { type: 'shadow' },
-        formatter: (params) => {
-          const p = Array.isArray(params) ? params[0] : params
-          const item = data[p?.dataIndex ?? 0]
-          return `${item?.label || ''}<br/>${item?.displayValue || p?.value || ''}`
-        },
-      },
-      xAxis: {
-        type: 'category',
-        data: labels,
-        axisLabel: { color: '#475569', fontSize: 11, interval: 0, rotate: labels.length > 4 ? 25 : 0 },
-        axisTick: { alignWithLabel: true },
-      },
-      yAxis: {
-        type: 'value',
-        axisLabel: { color: '#64748B', fontSize: 11 },
-        splitLine: { lineStyle: { color: '#E2E8F0' } },
-      },
-      series: [
-        {
+  disposeWriteCharts()
+  if (!isWriteSection.value) return
+  const segs = writeVisual.value?.segments || []
+  segs.forEach((seg, idx) => {
+    const data = Array.isArray(seg?.chartData) ? seg.chartData : []
+    if (!data.length) return
+    const labels = data.map(d => d.label)
+    const values = data.map(d => Number(d.value) || 0)
+    const type = String(seg?.chartType || '').toLowerCase()
+    if (type.includes('bar') && barRefs.value[idx]) {
+      const ch = echarts.init(barRefs.value[idx])
+      barCharts[idx] = ch
+      const hasMulti = Array.isArray(seg?.series) && seg.series.length >= 2 && Array.isArray(seg?.categories) && seg.categories.length
+      if (hasMulti) {
+        const cats = seg.categories
+        const palette = ['#4AA36F', '#60A5FA', '#F59E0B', '#EF4444', '#8B5CF6', '#10B981']
+        const series = seg.series.map((s, si) => ({
+          name: String(s?.name || `Series ${si+1}`),
           type: 'bar',
-          data: values,
           barMaxWidth: 28,
-          itemStyle: { borderRadius: [6, 6, 0, 0] },
-        },
-      ],
-    }, true)
-    console.log('[renderWriteCharts] Bar chart setOption called')
-  }
-
-  if (shouldRenderPie && writePieChart) {
-    writePieChart.setOption({
-      animationDuration: 450,
-      color: colorPalette,
-      tooltip: {
-        trigger: 'item',
-        formatter: (p) => {
-          const item = data[p?.dataIndex ?? 0]
-          return `${item?.label || p?.name}<br/>${item?.displayValue || p?.value}`
-        },
-      },
-      legend: {
-      bottom: 0,
-      left: 'center',
-      textStyle: { color: '#475569', fontSize: 11 },
-    },
-    series: [
-      {
-        type: 'pie',
-        radius: ['45%', '70%'],
-        center: ['50%', '42%'],
-        itemStyle: { borderRadius: 6, borderColor: '#fff', borderWidth: 1 },
-        label: {
-          formatter: ({ name, percent }) => `${name}\n${Math.round(percent)}%`,
-          color: '#334155',
-          fontSize: 10,
-        },
-        data: data.map((d) => ({ name: d.label, value: Math.max(Math.abs(Number(d.value) || 0), 0.0001) })),
-      },
-    ],
-    }, true)
-    console.log('[renderWriteCharts] Pie chart setOption called')
-  }
+          itemStyle: { borderRadius: [6,6,0,0] },
+          data: (Array.isArray(s?.data) ? s.data : []).map(d => Number(d?.value) || 0)
+        }))
+        ch.setOption({
+          animationDuration: 450,
+          color: palette,
+          legend: { top: 0, textStyle: { color: '#475569', fontSize: 11 } },
+          grid: { left: 12, right: 12, top: 28, bottom: 36, containLabel: true },
+          tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+          xAxis: { type: 'category', data: cats, axisLabel: { color: '#475569', fontSize: 11, interval: 0, rotate: cats.length > 4 ? 25 : 0 }, axisTick: { alignWithLabel: true } },
+          yAxis: { type: 'value', axisLabel: { color: '#64748B', fontSize: 11 }, splitLine: { lineStyle: { color: '#E2E8F0' } } },
+          series,
+        }, true)
+      } else {
+        ch.setOption({
+          animationDuration: 450,
+          color: ['#4AA36F'],
+          grid: { left: 12, right: 12, top: 28, bottom: 36, containLabel: true },
+          tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+          xAxis: { type: 'category', data: labels, axisLabel: { color: '#475569', fontSize: 11, interval: 0, rotate: labels.length > 4 ? 25 : 0 }, axisTick: { alignWithLabel: true } },
+          yAxis: { type: 'value', axisLabel: { color: '#64748B', fontSize: 11 }, splitLine: { lineStyle: { color: '#E2E8F0' } } },
+          series: [{ type: 'bar', data: values, barMaxWidth: 28, itemStyle: { borderRadius: [6, 6, 0, 0] } }],
+        }, true)
+      }
+    }
+    if (type.includes('pie') && pieRefs.value[idx]) {
+      const ch = echarts.init(pieRefs.value[idx])
+      pieCharts[idx] = ch
+      ch.setOption({
+        animationDuration: 450,
+        tooltip: { trigger: 'item' },
+        series: [{ type: 'pie', radius: ['45%', '70%'], center: ['50%', '42%'], itemStyle: { borderRadius: 6, borderColor: '#fff', borderWidth: 1 }, label: { formatter: '{b}: {c}' }, data: data.map(d => ({ name: d.label, value: Math.max(Math.abs(Number(d.value) || 0), 0.0001) })) }],
+      }, true)
+    }
+  })
 }
 
 function resizeWriteCharts() {
-  writeBarChart?.resize()
-  writePieChart?.resize()
+  barCharts.forEach(ch => ch?.resize?.())
+  pieCharts.forEach(ch => ch?.resize?.())
 }
 
 watch(
-  () => [isWriteSection.value, writeVisual.value?.chartData?.map(i => `${i.label}:${i.value}`).join('|')],
+  () => [isWriteSection.value, JSON.stringify(writeVisual.value?.segments || [])],
   async () => {
     await nextTick()
     requestAnimationFrame(() => renderWriteCharts())
   },
   { immediate: true }
 )
+
+watch(writeVisual, () => logVisualDebug('writeVisual-changed'))
 // Parse passage text into labeled sections: [{label, text}]
 const passageSections = computed(() => {
   const text = currentSection.value?.passage || ''
@@ -1967,6 +2019,9 @@ onMounted(() => {
 
   // click outside to close translate bubble
   document.addEventListener('mousedown', onDocMouseDownForTranslate)
+
+  // Debug: log backend payload and parsed visual
+  logVisualDebug('mounted')
 })
 
 onUnmounted(() => {
@@ -2568,6 +2623,35 @@ onUnmounted(() => {
   flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 12px;
+}
+
+.wvp-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.wvp-tab {
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #334155;
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.15s ease;
+}
+
+.wvp-tab.active {
+  background: #e0f2fe;
+  border-color: #38bdf8;
+  color: #0f172a;
+  box-shadow: 0 4px 12px rgba(56, 189, 248, 0.25);
+}
+
+.wvp-tab:hover {
+  transform: translateY(-1px);
 }
 .wvp-summary-item {
   font-size: 0.78em;

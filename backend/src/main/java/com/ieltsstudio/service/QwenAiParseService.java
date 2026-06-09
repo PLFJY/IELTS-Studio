@@ -39,6 +39,9 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 public class QwenAiParseService {
 
+    @Value("${ai.precise.provider:qwen}")
+    private String provider;
+
     @Value("${qwen.api-key:}")
     private String apiKey;
 
@@ -59,6 +62,25 @@ public class QwenAiParseService {
 
     @Value("${qwen.ai-max-tokens:8192}")
     private int aiMaxTokens;
+
+    // Xiaomi MiMO (OpenAI-compatible) – load when provider=mimo
+    @Value("${mimo.api-key:}")
+    private String mimoApiKey;
+
+    @Value("${mimo.base-url:}")
+    private String mimoBaseUrl;
+
+    @Value("${mimo.model:}")
+    private String mimoModel;
+
+    @Value("${mimo.ai-max-tokens:8192}")
+    private int mimoMaxTokens;
+
+    @Value("${ai.precise.http-timeout-seconds:240}")
+    private int httpTimeoutSeconds;
+
+    @Value("${ai.precise.max-retries:2}")
+    private int maxRetries;
 
     private final ObjectMapper objectMapper;
 
@@ -136,7 +158,40 @@ public class QwenAiParseService {
 
         对于 TASK 2（议论文）：必须逐字包含所有考试指令文字，例如 "WRITING TASK 2"、"You should spend about 40 minutes on this task."、"Write about the following topic:"、"Write at least 250 words." 等。不要省略任何原文中的文字。不需要特殊区块。
 
-        对于 TASK 1（描述图表）：passage 字符串必须【按顺序】包含以下区块，区块外不得有任何额外文字：
+        对于 TASK 1（描述图表）：passage 字符串必须【按顺序】包含以下区块，区块外不得有任何额外文字；
+        特别要求：必须包含完整且格式严格的“[Visual Data Summary]”区块。
+        - 如果页面上存在“多个独立图表”（例如上下两张图），必须将每一张图单独记录为一组元数据：
+          在 [Visual Data Summary] 内，对每张图分别给出一段 `chartTitle:`、`chartType:`、`xAxis:`、`yAxis:`、`series:` 与数据行；
+          多张图之间用一个空行分隔；严禁把多张图的数据混在一起。
+        - 若无法识别到可视数据，也应明确输出 chartType 行并如实给出可提取的数据点；
+        严禁省略该区块或以其他标签/字段名替代。一旦未满足，视为不合格输出，应重新生成满足规范的 JSON。
+
+        【结构化输出要求】在保证 passages 包含上述文本块的同时，必须直接提供结构化字段：
+        - charts: 数组。若无图表则返回 []。如果页面上有多张图，charts 必须包含多个元素，每个元素只对应一张图（禁止把两张图合并）。
+          每个元素为 { title, type: "bar"|"pie"|"line", unit: "percent"|"million"|"thousand"|"count"|null, categories: [字符串],
+          series: [{ name: 字符串, data: [{ label: 字符串, value: 数值 }], color: 字符串|null }], yAxisRange: { min: 数值|null, max: 数值|null }|null }
+          其中 color（可选）记录图例/配色（如 "#2f7ed8"、"green"、"dark gray"）；若无法可靠识别则置 null，但必须根据图例/颜色把不同系列拆分为不同的 series.name。
+        - tables: 数组。若无表格则返回 []，否则每个元素为 { title: 字符串|null, headers: [字符串...], rows: [[字符串...], ...] }
+        - 数值行必须独立，禁止把多条数据合并到同一行，禁止输出 keyValues/keyCategories 等自定义字段。
+        - charts.categories 与 data.label 必须一致，series.data.value 必须是数字，不能为空；type 只能是 bar/pie/line 之一。
+        - 必须保持原图的数值与刻度，不得归一化/比例化/四舍五入；负号必须保留。若能识别纵轴刻度范围，请填写 yAxisRange.min/max；无法识别则置 null。
+        - 若信息缺失，用空数组或 null 表示，不要编造文字描述。
+        - 示例（仅展示结构，切勿照抄数据）：
+          "charts": [
+            {
+              "title": "Sample",
+              "type": "bar",
+              "unit": "percent",
+              "categories": ["A","B"],
+              "series": [
+                {"name": "2020", "data": [{"label": "A", "value": 40}, {"label": "B", "value": 60}]},
+                {"name": "2021", "data": [{"label": "A", "value": 35}, {"label": "B", "value": 65}]}
+              ]
+            }
+          ],
+          "tables": [
+            {"title": "Sample Table", "headers": ["Col1","Col2"], "rows": [["r1c1","r1c2"], ["r2c1","r2c2"]]}
+          ]
 
           [Task Prompt]
           <逐字复制完整题目指令，例如“The chart below shows...
@@ -145,6 +200,9 @@ public class QwenAiParseService {
           [Visual Data Summary]
           chartTitle: <图表的主标题，如果有的话>
           chartType: <以下之一：pie chart | bar chart | line graph | table | map | process diagram>
+          xAxis: <横轴维度：year | category>
+          yAxis: <纵轴单位：percent | million | thousand | count>
+          series: <系列维度：对于计数图=类别（如“Marriages|Divorces”）；对于百分比图=年份（如“1970|2000”）>
           <分类标签 1>: <数值><单位>
           <分类标签 2>: <数值><单位>
           <分类标签 3>: <数值><单位>
@@ -160,6 +218,10 @@ public class QwenAiParseService {
         视觉数据摘要规则：
         - chartTitle 行必须放在第一行（如果有标题），单独一行，格式：“chartTitle: 主标题”
         - chartType 行必须放在第二行，单独一行，格式：“chartType: bar chart”
+        - 明确坐标与系列（需要区分不同颜色/图例）：
+          • 当为计数类（如 million/thousand/count）→ xAxis=year，series=类别（Marriages|Divorces），yAxis=对应单位（如 million）
+          • 当为百分比类（percent）→ xAxis=category，series=年份（1970|2000），yAxis=percent
+        - 不得把不同颜色（不同图例）代表的数值写入同一个 series；每种颜色/图例必须对应一个独立的 series.name。
         - 后续每一行是一个数据点：“标签: 数值 单位”
           正确示例：  “Over-grazing: 35%”
           正确示例：  “North America: 120 million”
@@ -199,6 +261,7 @@ public class QwenAiParseService {
         - locatorText 必须来自题目提示文字，不得自行编造。
         - 关键：不要修改、改动或重写原图中的任何文字。逐字复制所有文本，包括题目指令、图表标题、标签和表格内容。不允许总结或转述。
         - 只返回 JSON 对象 —— 不要用 markdown 代码块包裹，不要输出任何额外文字。
+        - 严格校验：Task 1 的 passage 中必须出现“[Visual Data Summary]”与“chartType:”独立行；否则此回答不合格。
 
         ── 示例 ─────────────────────────────────────────────────────────────
         {
@@ -334,8 +397,32 @@ public class QwenAiParseService {
     private static final String SYSTEM_PROMPT = BASE_SYSTEM_PROMPT + READING_PROMPT;
     private static final String MULTI_PAGE_PROMPT = READING_MULTI_PAGE_PROMPT;
 
+    private String getActiveApiKey() {
+        if ("mimo".equalsIgnoreCase(provider)) return mimoApiKey;
+        return apiKey;
+    }
+
+    private String getActiveBaseUrl() {
+        if ("mimo".equalsIgnoreCase(provider)) return (mimoBaseUrl == null || mimoBaseUrl.isBlank()) ? baseUrl : mimoBaseUrl;
+        return baseUrl;
+    }
+
+    private String getActiveModel() {
+        if ("mimo".equalsIgnoreCase(provider)) return (mimoModel == null || mimoModel.isBlank()) ? model : mimoModel;
+        return model;
+    }
+
+    private int getActiveMaxTokens() {
+        if ("mimo".equalsIgnoreCase(provider)) return mimoMaxTokens;
+        return aiMaxTokens;
+    }
+
+    public String getProviderName() {
+        return "mimo".equalsIgnoreCase(provider) ? "MiMO" : "Qwen";
+    }
+
     public boolean isConfigured() {
-        return apiKey != null && !apiKey.isBlank();
+        return getActiveApiKey() != null && !getActiveApiKey().isBlank();
     }
 
     // ── Public entry point ──────────────────────────────────────────────────
@@ -351,8 +438,9 @@ public class QwenAiParseService {
     @SuppressWarnings("unchecked")
     public Map<String, Object> parseDocument(byte[] fileBytes, String filename, String examType) throws Exception {
         if (!isConfigured()) {
-            throw new IllegalStateException("Qwen API key 未配置，请在 application.yml 中设置 qwen.api-key");
+            throw new IllegalStateException("AI 精准解析未配置，请在 application.yml 中设置对应提供方的 API Key");
         }
+        log.info("Precise parse using provider={}, model={}, baseUrl={}", getProviderName(), getActiveModel(), getActiveBaseUrl());
         String lower = filename == null ? "" : filename.toLowerCase();
         
         // Default to reading if examType is null or empty
@@ -367,7 +455,7 @@ public class QwenAiParseService {
             String mime = detectMimeType(filename);
             dataUrls = List.of("data:" + mime + ";base64," + Base64.getEncoder().encodeToString(fileBytes));
         } else {
-            throw new RuntimeException("Qwen 精准解析当前仅支持 PDF 或图片文件");
+            throw new RuntimeException("精准解析当前仅支持 PDF 或图片文件");
         }
 
         if (dataUrls.size() == 1) {
@@ -390,6 +478,7 @@ public class QwenAiParseService {
         if (!isConfigured()) {
             throw new IllegalStateException("Qwen API key 未配置，请在 application.yml 中设置 qwen.api-key");
         }
+        log.info("Precise parse(images) using provider={}, model={}, baseUrl={}", getProviderName(), getActiveModel(), getActiveBaseUrl());
         if (imageBytes == null || imageBytes.isEmpty()) {
             throw new RuntimeException("未提供图片数据");
         }
@@ -476,31 +565,54 @@ public class QwenAiParseService {
 
     private String callQwen(String systemPrompt, List<Map<String, Object>> userContent) throws Exception {
         Map<String, Object> requestBody = new LinkedHashMap<>();
-        requestBody.put("model", model);
+        requestBody.put("model", getActiveModel());
         requestBody.put("temperature", 0.1);
-        requestBody.put("max_tokens", aiMaxTokens);
+        // Some OpenAI-compatible providers (e.g., MiMO) expect 'max_completion_tokens'
+        String tokenField = "mimo".equalsIgnoreCase(provider) ? "max_completion_tokens" : "max_tokens";
+        requestBody.put(tokenField, getActiveMaxTokens());
         requestBody.put("messages", List.of(
                 Map.of("role", "system", "content", systemPrompt),
                 Map.of("role", "user", "content", userContent)
         ));
 
         HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(baseUrl + "/chat/completions"))
+                .uri(URI.create(getActiveBaseUrl() + "/chat/completions"))
                 .header("Content-Type", "application/json")
-                .header("Authorization", "Bearer " + apiKey)
+                .header("Authorization", "Bearer " + getActiveApiKey())
                 .POST(HttpRequest.BodyPublishers.ofString(
                         objectMapper.writeValueAsString(requestBody), StandardCharsets.UTF_8))
-                .timeout(Duration.ofSeconds(180))
+                .timeout(Duration.ofSeconds(Math.max(60, httpTimeoutSeconds)))
                 .build();
 
-        HttpResponse<String> response = SHARED_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
-        if (response.statusCode() >= 400) {
-            throw new RuntimeException("Qwen AI parse failed HTTP " + response.statusCode() + ": " + response.body());
+        HttpResponse<String> response = null;
+        int attempts = Math.max(1, 1 + Math.max(0, maxRetries));
+        for (int i = 1; i <= attempts; i++) {
+            try {
+                log.info("{} AI request attempt {}/{}", getProviderName(), i, attempts);
+                response = SHARED_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+                int sc = response.statusCode();
+                if (sc >= 500 && i < attempts) {
+                    log.warn("{} AI HTTP {} on attempt {}/{} – retrying...", getProviderName(), sc, i, attempts);
+                    Thread.sleep(1500L * i);
+                    continue;
+                }
+                if (sc >= 400) {
+                    throw new RuntimeException(getProviderName() + " AI parse failed HTTP " + sc + ": " + response.body());
+                }
+                break; // success
+            } catch (java.net.http.HttpTimeoutException te) {
+                if (i < attempts) {
+                    log.warn("{} AI request timed out on attempt {}/{} – retrying...", getProviderName(), i, attempts);
+                    Thread.sleep(1500L * i);
+                    continue;
+                }
+                throw te;
+            }
         }
 
         JsonNode root = objectMapper.readTree(response.body());
         String content = root.path("choices").path(0).path("message").path("content").asText();
-        log.info("Qwen AI parse response length={}", content.length());
+        log.info("{} AI parse response length={}", getProviderName(), content.length());
 
         // Strip markdown code fences if present
         if (content.startsWith("```")) {
@@ -521,11 +633,13 @@ public class QwenAiParseService {
                     Map<String, Object> section = (Map<String, Object>) s;
                     normalizePassages(section);
                     normalizeQuestions(section);
+                    enforceVisualDataSummary(section);
                 }
             }
         } else {
             normalizePassages(parsed);
             normalizeQuestions(parsed);
+            enforceVisualDataSummary(parsed);
         }
         return parsed;
     }
@@ -704,19 +818,131 @@ public class QwenAiParseService {
         return enriched;
     }
 
+    /**
+     * Ensure Task 1 passages contain a [Visual Data Summary] block. If missing, try to
+     * synthesize it from detected chartTitle/chartType lines and data point lines.
+     * This does not modify non-writing passages.
+     */
+    @SuppressWarnings("unchecked")
+    private void enforceVisualDataSummary(Map<String, Object> node) {
+        Object pObj = node.get("passages");
+        if (!(pObj instanceof List<?> pList) || pList.isEmpty()) return;
+
+        List<String> updated = new ArrayList<>();
+        for (Object p : pList) {
+            String text = p == null ? "" : String.valueOf(p);
+            String norm = text.replace("\r\n", "\n").replace("\r", "\n");
+
+            // Heuristic: if already contains the tag, keep as-is
+            if (norm.toLowerCase(Locale.ROOT).contains("[visual data summary]".toLowerCase(Locale.ROOT))) {
+                updated.add(text);
+                continue;
+            }
+
+            // Try to detect chartType/chartTitle lines and data points
+            String[] lines = norm.split("\n");
+            String chartTitle = null;
+            String chartType = null;
+            List<String> dataLines = new ArrayList<>();
+            for (String raw : lines) {
+                String line = raw == null ? "" : raw.trim();
+                if (line.isEmpty()) continue;
+                if (chartTitle == null && line.matches("(?i)^chartTitle\s*[:：].+")) {
+                    chartTitle = line.replaceFirst("(?i)^chartTitle\s*[:：]\\s*", "").trim();
+                    continue;
+                }
+                if (chartType == null && line.matches("(?i)^chartType\s*[:：].+")) {
+                    chartType = line.replaceFirst("(?i)^chartType\s*[:：]\\s*", "").trim();
+                    continue;
+                }
+                // Data line: Label: number [unit]
+                if (line.matches("^.{1,100}:\\s*-?\\d+(?:\\.\\d+)?(?:\\s*(%|percent|percentage|million|millions|billion|billions|thousand|thousands|hundred|hundreds|k|m|bn|people|adults|students|cases|units|items|cars|vehicles))?$")) {
+                    dataLines.add(line);
+                }
+            }
+
+            boolean looksLikeTask1 = chartType != null || dataLines.size() >= 2 || norm.matches("(?is).*The (chart|graph|table) below shows.*");
+            if (looksLikeTask1 && (chartType != null || !dataLines.isEmpty())) {
+                StringBuilder block = new StringBuilder();
+                block.append("[Visual Data Summary]\n");
+                if (chartTitle != null && !chartTitle.isBlank()) {
+                    block.append("chartTitle: ").append(chartTitle).append('\n');
+                }
+                if (chartType != null && !chartType.isBlank()) {
+                    block.append("chartType: ").append(chartType).append('\n');
+                }
+                for (String dl : dataLines) block.append(dl).append('\n');
+
+                String synthesized = block.toString().trim();
+                String newText = synthesized + "\n\n" + text;
+                updated.add(newText);
+                log.info("Synthesized [Visual Data Summary] block ({} data lines) into passage.", dataLines.size());
+            } else {
+                updated.add(text);
+            }
+        }
+
+        node.put("passages", updated);
+    }
+
     @SuppressWarnings("unchecked")
     private void normalizeQuestions(Map<String, Object> node) {
         Object qObj = node.get("questions");
         if (!(qObj instanceof List<?> qList)) return;
+        // Determine whether passage explicitly contains a WRITING TASK 2 marker
+        String joinedPassages = "";
+        Object pObj = node.get("passages");
+        if (pObj instanceof List<?> pList) {
+            List<String> ps = new ArrayList<>();
+            for (Object p : pList) if (p != null) ps.add(String.valueOf(p));
+            joinedPassages = String.join("\n", ps);
+        }
+        boolean hasTask2Marker = Pattern.compile("(?i)WRITING\\s+TASK\\s*2").matcher(joinedPassages).find();
 
+        List<Map<String, Object>> cleaned = new ArrayList<>();
         for (Object q : qList) {
             if (!(q instanceof Map<?, ?>)) continue;
             Map<String, Object> qm = (Map<String, Object>) q;
+
+            // Optionally drop spurious Task2 when passage lacks explicit marker
+            Object type = qm.get("type");
+            Object taskType = qm.get("taskType");
+            if (!hasTask2Marker && "write".equals(type) && taskType != null &&
+                String.valueOf(taskType).equalsIgnoreCase("Task2")) {
+                continue; // skip synthetic Task2
+            }
+
             Object text = qm.get("text");
-            if (text != null) qm.put("text", normalizePassageText(String.valueOf(text)));
+            if (text != null) {
+                String norm = normalizePassageText(String.valueOf(text));
+                qm.put("text", stripVisualBlocksFromText(norm));
+            }
             Object locator = qm.get("locatorText");
             if (locator != null) qm.put("locatorText", String.valueOf(locator).replaceAll("\\s+", " ").trim());
+
+            cleaned.add(qm);
         }
+        node.put("questions", cleaned);
+    }
+
+    /**
+     * Remove visual/table blocks and inline chart/table lines from question text to keep prompt clean.
+     */
+    private String stripVisualBlocksFromText(String input) {
+        if (input == null || input.isBlank()) return "";
+        String t = input.replace("\r\n", "\n").replace("\r", "\n");
+        // Remove [Visual Data Summary] and [Table Data] blocks
+        t = t.replaceAll("(?is)\n?\\[Visual Data Summary\\][\\s\\S]*?(?=\n\\[[^\\]]+\\]|$)", "\n");
+        t = t.replaceAll("(?is)\n?\\[Table Data\\][\\s\\S]*?(?=\n\\[[^\\]]+\\]|$)", "\n");
+        // Remove typical inline chart meta lines and numeric data rows
+        List<String> out = new ArrayList<>();
+        for (String raw : t.split("\\n")) {
+            String line = raw == null ? "" : raw.trim();
+            if (line.matches("(?i)^(chartTitle|chartType|xAxis|yAxis|series)\\s*[:：].*")) continue;
+            if (line.matches("^.{1,100}:\\s*-?\\d+(?:\\.\\d+)?(?:\\s*(%|percent|percentage|million|millions|billion|billions|thousand|thousands|hundred|hundreds|k|m|bn|people|adults|students|cases|units|items|cars|vehicles))?$")) continue;
+            out.add(raw);
+        }
+        return String.join("\n", out).replaceAll("\n{3,}", "\n\n").trim();
     }
 
     private String normalizePassageText(String input) {

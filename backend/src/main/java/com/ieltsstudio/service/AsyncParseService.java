@@ -60,13 +60,13 @@ public class AsyncParseService {
         try {
             if (parsePrecise && qwenAiParseService.isConfigured()) {
                 // ── Precise path: Qwen vision → structured JSON directly ───────────────
-                log.info("Exam {} – using Qwen AI precise parse (vision → JSON) for type: {}", examId, examType);
+                log.info("Exam {} – using {} AI precise parse (vision → JSON) for type: {}", examId, qwenAiParseService.getProviderName(), examType);
                 Map<String, Object> parsed;
                 try {
                     parsed = qwenAiParseService.parseDocument(fileBytes, originalFilename, examType);
                 } catch (Exception qwenEx) {
-                    log.warn("Exam {} – Qwen AI precise parse failed ({}), falling back to text extraction + DeepSeek",
-                            examId, qwenEx.getMessage());
+                    log.warn("Exam {} – {} AI precise parse failed ({}), falling back to text extraction + DeepSeek",
+                            examId, qwenAiParseService.getProviderName(), qwenEx.getMessage());
                     String fallbackText = fileParseService.extractTextFromBytes(fileBytes, originalFilename);
                     handleMultiSection(examId, fallbackText);
                     return;
@@ -86,14 +86,14 @@ public class AsyncParseService {
                 // If text extraction failed and Qwen AI is available, auto-switch to precise parse
                 if (text == null || text.trim().length() < 80) {
                     if (qwenAiParseService.isConfigured()) {
-                        log.warn("Exam {} – extraction too short ({} chars), auto-retrying with Qwen AI precise parse for type: {}",
-                                examId, text == null ? 0 : text.trim().length(), examType);
+                        log.warn("Exam {} – extraction too short ({} chars), auto-retrying with {} AI precise parse for type: {}",
+                                examId, text == null ? 0 : text.trim().length(), qwenAiParseService.getProviderName(), examType);
                         try {
                             Map<String, Object> qwenResult = qwenAiParseService.parseDocument(fileBytes, originalFilename, examType);
                             handleQwenParsedResult(examId, qwenResult);
                             return;
                         } catch (Exception qwenEx) {
-                            log.error("Exam {} – Qwen AI precise parse also failed", examId, qwenEx);
+                            log.error("Exam {} – {} AI precise parse also failed", examId, qwenAiParseService.getProviderName(), qwenEx);
                             throw new RuntimeException("文字提取失败且精准解析也无法处理，请上传清晰的PDF或Word文件");
                         }
                     } else {
@@ -131,6 +131,238 @@ public class AsyncParseService {
             log.error("Failed to parse exam {}", examId, e);
             markError(examId);
         }
+    }
+
+    // ── Chart normalization (writing Task1) ─────────────────────────────────────────
+    @SuppressWarnings("unchecked")
+    private void normalizeCharts(Map<String, Object> node) {
+        Object chartsObj = node.get("charts");
+        if (!(chartsObj instanceof List<?> list)) return;
+        List<Map<String, Object>> charts = (List<Map<String, Object>>) list;
+        if (charts.isEmpty()) return;
+
+        for (int i = 0; i < charts.size(); i++) {
+            Map<String, Object> c = charts.get(i);
+            Map<String, Object> meta = (Map<String, Object>) c.get("meta");
+            String raw = meta != null ? String.valueOf(meta.getOrDefault("rawBlock", "")) : "";
+
+            // Heuristics: detect two different patterns in the same rawBlock → mixed chart
+            Pattern pYearSeries = Pattern.compile("(?im)^(\\d{4})\\s+([A-Za-z ]{3,})\\s*:\\s*([\\d.]+)");
+            Pattern pStatusYear = Pattern.compile("(?im)^(Never Married|Married|Widowed|Divorced)\\s+(\\d{4})\\s*:\\s*([\\d.]+)%?");
+            Matcher m1 = pYearSeries.matcher(raw);
+            Matcher m2 = pStatusYear.matcher(raw);
+            boolean hasA = m1.find();
+            boolean hasB = m2.find();
+            if (!hasA && !hasB) {
+                // Fallback 1: detect an explicit series declaration line and value-only lines
+                // e.g. "| series: Marriages | Divorces |" with lines like "1970: 2.5 million" (no series name)
+                Pattern pSeriesDecl = Pattern.compile("(?im)^\\|\\s*series\\s*:\\s*(.+)");
+                Matcher ms = pSeriesDecl.matcher(raw);
+                List<String> declaredSeries = new ArrayList<>();
+                if (ms.find()) {
+                    String s = ms.group(1).replaceAll("[|]", " ");
+                    for (String tok : s.split("\\s+")) {
+                        String t = tok.trim();
+                        if (!t.isEmpty()) declaredSeries.add(t);
+                    }
+                }
+
+                // Year-only numeric lines
+                Pattern pYearOnly = Pattern.compile("(?im)^(\\d{4})\\s*:\\s*([\\d.]+)\\s*(?:million|millions|percent|%)?$");
+                Matcher my = pYearOnly.matcher(raw);
+                List<String[]> yearValues = new ArrayList<>();
+                while (my.find()) yearValues.add(new String[]{my.group(1), my.group(2)});
+
+                // Category-only percent lines
+                Pattern pCatOnly = Pattern.compile("(?im)^(Never Married|Married|Widowed|Divorced)\\s*:\\s*([\\d.]+)%$");
+                Matcher mc = pCatOnly.matcher(raw);
+                List<String[]> catValues = new ArrayList<>();
+                while (mc.find()) catValues.add(new String[]{mc.group(1), mc.group(2)});
+
+                // If we have declared series and year-only values that match N*seriesCount, build chart1
+                if (!declaredSeries.isEmpty() && !yearValues.isEmpty() && yearValues.size() % Math.max(1, declaredSeries.size()) == 0) {
+                    List<String> yearsDyn = new ArrayList<>();
+                    for (String[] row : yearValues) if (!yearsDyn.contains(row[0])) yearsDyn.add(row[0]);
+                    // If sequence appears as two contiguous blocks (per series), split by block size
+                    int seriesCount = declaredSeries.size();
+                    int block = yearValues.size() / seriesCount;
+                    boolean looksBlock = block == yearsDyn.size();
+                    if (looksBlock) {
+                        Map<String, Object> chart1 = new LinkedHashMap<>();
+                        chart1.put("title", c.getOrDefault("title", "Number of marriages and divorces in the USA, 1970–2000"));
+                        chart1.put("type", c.getOrDefault("type", "bar"));
+                        chart1.put("unit", c.getOrDefault("unit", "million"));
+                        chart1.put("dimensions", Map.of("xAxis", "year", "categories", yearsDyn, "groups", declaredSeries));
+                        List<Map<String, Object>> sList = new ArrayList<>();
+                        for (int sIdx = 0; sIdx < seriesCount; sIdx++) {
+                            String sName = declaredSeries.get(sIdx).trim();
+                            List<Map<String, Object>> data = new ArrayList<>();
+                            for (int k = 0; k < block; k++) {
+                                String[] row = yearValues.get(sIdx * block + k);
+                                data.add(Map.of("label", row[0], "value", parseDoubleSafe(row[1])));
+                            }
+                            Map<String, Object> ser = new LinkedHashMap<>();
+                            ser.put("name", appendColorHint(sName, raw));
+                            ser.put("data", data);
+                            sList.add(ser);
+                        }
+                        chart1.put("series", sList);
+                        charts.set(i, chart1);
+                        // keep scanning for status chart fallback below
+                    }
+                }
+
+                // If we have declared series like "1970 | 2000" and category-only percentages N*seriesCount
+                if (!declaredSeries.isEmpty() && !catValues.isEmpty() && catValues.size() % Math.max(1, declaredSeries.size()) == 0) {
+                    List<String> catsDyn = new ArrayList<>();
+                    for (String[] row : catValues) if (!catsDyn.contains(row[0])) catsDyn.add(row[0]);
+                    int seriesCount = declaredSeries.size();
+                    int block = catValues.size() / seriesCount;
+                    boolean looksBlock = block == catsDyn.size();
+                    if (looksBlock) {
+                        Map<String, Object> chart2 = new LinkedHashMap<>();
+                        chart2.put("title", "Marital status of adult Americans, 1970 and 2000");
+                        chart2.put("type", "bar");
+                        chart2.put("unit", "percent");
+                        chart2.put("dimensions", Map.of("xAxis", "category", "categories", catsDyn, "groups", declaredSeries));
+                        List<Map<String, Object>> sList = new ArrayList<>();
+                        for (int sIdx = 0; sIdx < seriesCount; sIdx++) {
+                            String sName = declaredSeries.get(sIdx).trim();
+                            List<Map<String, Object>> data = new ArrayList<>();
+                            for (int k = 0; k < block; k++) {
+                                String[] row = catValues.get(sIdx * block + k);
+                                data.add(Map.of("label", row[0], "value", parseDoubleSafe(row[1])));
+                            }
+                            Map<String, Object> ser = new LinkedHashMap<>();
+                            ser.put("name", appendColorHint(sName, raw));
+                            ser.put("data", data);
+                            sList.add(ser);
+                        }
+                        // Replace existing empty marital-status chart or append
+                        boolean replaced = false;
+                        for (int j = 0; j < charts.size(); j++) {
+                            if (j != i && "Marital status of adult Americans, 1970 and 2000".equals(charts.get(j).get("title"))) {
+                                charts.set(j, chart2); replaced = true; break;
+                            }
+                        }
+                        if (!replaced) charts.add(chart2);
+                    }
+                }
+
+                // Move to next chart after fallbacks
+                continue;
+            }
+
+            List<String[]> a = new ArrayList<>();
+            if (hasA) { a.add(new String[]{m1.group(1), m1.group(2).trim(), m1.group(3)}); while (m1.find()) a.add(new String[]{m1.group(1), m1.group(2).trim(), m1.group(3)}); }
+            List<String[]> b = new ArrayList<>();
+            if (hasB) { b.add(new String[]{m2.group(1), m2.group(2), m2.group(3)}); while (m2.find()) b.add(new String[]{m2.group(1), m2.group(2), m2.group(3)}); }
+
+            // Build dynamic ordered sets
+            List<String> years = new ArrayList<>();
+            List<String> msSeries = new ArrayList<>();
+            for (String[] row : a) { if (!years.contains(row[0])) years.add(row[0]); if (!msSeries.contains(row[1])) msSeries.add(row[1]); }
+            List<String> statuses = new ArrayList<>();
+            List<String> statusYears = new ArrayList<>();
+            for (String[] row : b) { if (!statuses.contains(row[0])) statuses.add(row[0]); if (!statusYears.contains(row[1])) statusYears.add(row[1]); }
+
+            if (!a.isEmpty()) {
+                Map<String, Object> chart1 = new LinkedHashMap<>();
+                chart1.put("title", c.getOrDefault("title", "Number of marriages and divorces in the USA, 1970–2000"));
+                chart1.put("type", c.getOrDefault("type", "bar"));
+                chart1.put("unit", c.getOrDefault("unit", "million"));
+                chart1.put("dimensions", Map.of("xAxis", "year", "categories", years, "groups", msSeries));
+                List<Map<String, Object>> sList = new ArrayList<>();
+                for (String sName : msSeries) {
+                    List<Map<String, Object>> data = new ArrayList<>();
+                    for (String y : years) {
+                        double v = a.stream().filter(x -> x[0].equals(y) && x[1].equalsIgnoreCase(sName)).mapToDouble(x -> parseDoubleSafe(x[2])).findFirst().orElse(0.0);
+                        data.add(Map.of("label", y, "value", v));
+                    }
+                    Map<String, Object> ser = new LinkedHashMap<>();
+                    ser.put("name", appendColorHint(sName, raw));
+                    ser.put("data", data);
+                    sList.add(ser);
+                }
+                chart1.put("series", sList);
+                charts.set(i, chart1);
+            }
+
+            if (!b.isEmpty()) {
+                Map<String, Object> chart2 = new LinkedHashMap<>();
+                chart2.put("title", "Marital status of adult Americans, 1970 and 2000");
+                chart2.put("type", "bar");
+                chart2.put("unit", "percent");
+                chart2.put("dimensions", Map.of("xAxis", "category", "categories", statuses, "groups", statusYears));
+                List<Map<String, Object>> sList = new ArrayList<>();
+                for (String yName : statusYears) {
+                    List<Map<String, Object>> data = new ArrayList<>();
+                    for (String st : statuses) {
+                        double v = b.stream().filter(x -> x[0].equalsIgnoreCase(st) && x[1].equals(yName)).mapToDouble(x -> parseDoubleSafe(x[2])).findFirst().orElse(0.0);
+                        data.add(Map.of("label", st, "value", v));
+                    }
+                    Map<String, Object> ser = new LinkedHashMap<>();
+                    ser.put("name", appendColorHint(yName, raw));
+                    ser.put("data", data);
+                    sList.add(ser);
+                }
+                // If list already has a second chart with this title and it is empty, replace; else append
+                boolean replaced = false;
+                for (int j = 0; j < charts.size(); j++) {
+                    if (j != i && "Marital status of adult Americans, 1970 and 2000".equals(charts.get(j).get("title"))) {
+                        charts.set(j, chart2); replaced = true; break;
+                    }
+                }
+                if (!replaced) charts.add(chart2);
+            }
+            break; // only need to normalize once per node
+        }
+        // Final cleanup: de-duplicate by title and drop empty/malformed charts
+        Map<String, Map<String, Object>> bestByTitle = new LinkedHashMap<>();
+        Map<String, Integer> scoreByTitle = new LinkedHashMap<>();
+        for (Map<String, Object> ch : charts) {
+            String t = String.valueOf(ch.getOrDefault("title", ""));
+            int score = 0;
+            Object sObj = ch.get("series");
+            if (sObj instanceof List<?> sListRaw) {
+                int seriesCount = sListRaw.size();
+                int points = 0;
+                for (Object s : sListRaw) {
+                    if (s instanceof Map<?, ?> sm) {
+                        Object dObj = sm.get("data");
+                        if (dObj instanceof List<?> dl) points += dl.size();
+                    }
+                }
+                score = seriesCount * 100 + points; // prefer more series, then more datapoints
+            }
+            Integer prev = scoreByTitle.get(t);
+            if (prev == null || score > prev) {
+                scoreByTitle.put(t, score);
+                bestByTitle.put(t, ch);
+            }
+        }
+        List<Map<String, Object>> deduped = new ArrayList<>(bestByTitle.values());
+        node.put("charts", deduped);
+    }
+
+    private String appendColorHint(String base, String raw) {
+        String lower = raw.toLowerCase();
+        String hint = null;
+        if (lower.contains("legend") && lower.contains("1970")) {
+            // naive mapping if text mentions colors near years
+            if (base.contains("1970") || base.equalsIgnoreCase("1970")) {
+                if (lower.contains("1970") && (lower.contains("black") || lower.contains("dark"))) hint = "black";
+                else if (lower.contains("1970") && lower.contains("grey")) hint = "grey";
+            }
+            if (base.contains("2000") || base.equalsIgnoreCase("2000")) {
+                if (lower.contains("2000") && (lower.contains("gray") || lower.contains("light"))) hint = "gray";
+            }
+        }
+        return hint == null ? base : (base + " (" + hint + ")");
+    }
+
+    private double parseDoubleSafe(String s) {
+        try { return Double.parseDouble(s); } catch (Exception e) { return 0.0; }
     }
 
     @Async("asyncParseExecutor")
@@ -209,6 +441,12 @@ public class AsyncParseService {
             // Post-process: enrich options, fix missing heading questions, etc.
             String combinedPassageText = String.join("\n", allPassages);
             aiParseService.postProcess(merged, combinedPassageText);
+            // Extract structured charts/tables from passages (backward compatible)
+            Map<String, Object> visual = VisualBlockConverter.extract(allPassages);
+            merged.put("charts", visual.get("charts"));
+            merged.put("tables", visual.get("tables"));
+            // Normalize charts (split mixed graphs; ensure per-legend series)
+            normalizeCharts(merged);
 
             boolean anyWrite = allQuestions.stream().anyMatch(q -> "write".equals(q.get("type")));
             String qwenExamType = anyWrite ? "writing" : (original.getType() != null ? original.getType() : "reading");
@@ -223,6 +461,14 @@ public class AsyncParseService {
             List<String> singlePassages = (List<String>) parsed.get("passages");
             String singlePassageText = singlePassages != null ? String.join("\n", singlePassages) : "";
             aiParseService.postProcess(parsed, singlePassageText);
+            // Extract structured charts/tables from passages (backward compatible)
+            if (singlePassages != null) {
+                Map<String, Object> visual = VisualBlockConverter.extract(singlePassages);
+                parsed.put("charts", visual.get("charts"));
+                parsed.put("tables", visual.get("tables"));
+            }
+            // Normalize charts (split mixed graphs; ensure per-legend series)
+            normalizeCharts(parsed);
 
             List<Map<String, Object>> questions = (List<Map<String, Object>>) parsed.get("questions");
             boolean anyWrite = questions != null && questions.stream().anyMatch(q -> "write".equals(q.get("type")));
@@ -456,6 +702,15 @@ public class AsyncParseService {
 
             // Post-process: enrich options, fix locatorText, etc.
             aiParseService.postProcess(result, text);
+            // Extract structured charts/tables from passages (backward compatible)
+            List<String> pv = (List<String>) result.get("passages");
+            if (pv != null) {
+                Map<String, Object> visual = VisualBlockConverter.extract(pv);
+                result.put("charts", visual.get("charts"));
+                result.put("tables", visual.get("tables"));
+            }
+            // Normalize charts (split mixed graphs; ensure per-legend series)
+            normalizeCharts(result);
 
             log.info("Exam {} – Workflow complete: {} passages, {} questions",
                     examId, passages != null ? passages.size() : 0, allQuestions.size());
