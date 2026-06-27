@@ -140,12 +140,14 @@ SomeService 组装业务结果 → Result.success(...)
 
 ## 6. 后续实施阶段
 
-| 阶段 | 内容 | 涉及模块 |
+| 阶段 | 状态 | 内容 |
 |---|---|---|
-| **Phase 1**（当前） | 文档与 Agent 开发基础设施 | `AGENTS.md`、`docs/*` |
-| **Phase 2** | 抽象 Provider 与客户端：`AiTaskType`、`AiKeyMode`、`AiProviderPreset`、`AiCredentials`、`OpenAiCompatibleClient`、`AiSettingsService`、`AiUsageGuard` | `backend/.../ai/`（新建包） |
-| **Phase 3** | 数据库与用户设置接口：`user_ai_settings`、`ai_usage_quota` 表 + CRUD API | `init.sql`、`entity/`、`mapper/`、`controller/`、`service/` |
-| **Phase 4** | 前端用户中心设置 UI：在 `ProfileView.vue` 增加 AI 设置区，masked key 展示 | `frontend/src/views/ProfileView.vue`、`frontend/src/api/` |
-| **Phase 5** | 现有 AI 功能接入新架构：`AiParseService` / `QwenAiParseService` / `ClozeService` 等迁移到新抽象 | `backend/.../service/` |
+| Phase 1 | ✅ 已完成 | Agent 文档与开发基础设施（`AGENTS.md`、`docs/*`） |
+| Phase 2 | ✅ 已完成 | Provider 抽象与 OpenAI-compatible client：`AiTaskType` / `AiKeyMode` / `AiProviderPreset` / `AiCredentials` / `AiProviderRegistry` / `AiSettingsService` BUILTIN / `AiUsageGuard` 骨架 |
+| Phase 3A | ✅ 已完成 | 数据库表、Entity/Mapper、API Key 加密工具（`init.sql`、`entity/`、`mapper/`、`AiApiKeyCrypto`） |
+| Phase 3B | ✅ 已完成 | 用户 AI 设置后端接口与 USER 模式 credentials 解析（`UserAiSettingsService` / `UserAiSettingsController` / DTO，`AiSettingsService` 已支持 USER 模式） |
+| Phase 3B-polish | ✅ 已完成 | 安全补强：DTO `toString()` 防泄露、`resolveUser` 解密前校验 provider-taskType、`requireUserId` 防御 |
+| Phase 4 | ⏭ 下一步 | 前端用户中心 AI 设置 UI：在 `ProfileView.vue` 增加 AI 设置区，masked key 展示（`frontend/src/views/ProfileView.vue`、`frontend/src/api/`） |
+| Phase 5 | 后续 | 现有 AI 功能接入新架构：`AiParseService` / `QwenAiParseService` / `ClozeService` 等迁移到新抽象（`backend/.../service/`） |
 
 > 各阶段应独立 PR，小步推进，每阶段都要跑通验证命令（`mvn test` / `npm run build`）。
