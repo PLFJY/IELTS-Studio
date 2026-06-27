@@ -6,6 +6,7 @@ import com.ieltsstudio.ai.model.AiChatMessage;
 import com.ieltsstudio.ai.model.AiChatRequest;
 import com.ieltsstudio.ai.model.AiChatResponse;
 import com.ieltsstudio.ai.model.AiCredentials;
+import com.ieltsstudio.ai.util.AiLogSanitizer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -20,7 +21,6 @@ import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Pattern;
 
 /**
  * 统一 OpenAI-compatible chat completions 客户端。
@@ -52,13 +52,6 @@ public class OpenAiCompatibleClient {
 
     /** 默认请求超时（秒），仅当 request 未指定时使用 */
     private static final int DEFAULT_TIMEOUT_SECONDS = 60;
-
-    /** provider 错误体在 debug 日志中保留的最大长度（脱敏后） */
-    private static final int MAX_ERROR_BODY_LOG_LEN = 500;
-
-    /** 用于在错误体中匹配疑似 key 的片段并脱敏 */
-    private static final Pattern KEY_LIKE_PATTERN =
-            Pattern.compile("(?i)(sk-[A-Za-z0-9]{4,})|(bearer\\s+[A-Za-z0-9._-]{4,})");
 
     private final ObjectMapper objectMapper;
 
@@ -119,7 +112,7 @@ public class OpenAiCompatibleClient {
         int statusCode = response.statusCode();
         if (statusCode >= 400) {
             // 脱敏后的错误体只进 debug 日志，不进异常 message
-            String sanitized = sanitizeForLog(response.body());
+            String sanitized = AiLogSanitizer.summarizeProviderError(response.body());
             log.debug("AI provider error: provider={}, model={}, status={}, body={}",
                     credentials.getProvider(), credentials.getModel(), statusCode, sanitized);
             // 给调用方的 message 不含原始 body
@@ -196,22 +189,5 @@ public class OpenAiCompatibleClient {
             throw new IllegalStateException(
                     "AI base URL must start with http:// or https:// (provider=" + provider + ")");
         }
-    }
-
-    /**
-     * 脱敏 provider 返回的错误体：截断 + 屏蔽疑似 key / Bearer 片段。
-     * 仅用于日志，不会进入抛给调用方 / 用户的异常 message。
-     */
-    private String sanitizeForLog(String body) {
-        if (body == null) return "";
-        String s = KEY_LIKE_PATTERN.matcher(body).replaceAll(m -> {
-            String g = m.group();
-            if (g.length() <= 6) return "***";
-            return g.substring(0, 3) + "****";
-        });
-        if (s.length() > MAX_ERROR_BODY_LOG_LEN) {
-            s = s.substring(0, MAX_ERROR_BODY_LOG_LEN) + "...(truncated)";
-        }
-        return s;
     }
 }

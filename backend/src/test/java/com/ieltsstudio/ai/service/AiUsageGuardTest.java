@@ -46,8 +46,44 @@ class AiUsageGuardTest {
     }
 
     @Test
+    void markSuccessShouldThrowWhenUserIdNull() {
+        assertThrows(IllegalArgumentException.class,
+                () -> guard.markSuccess(null, AiFeature.AI_CHAT, AiKeyMode.BUILTIN));
+    }
+
+    @Test
+    void markSuccessShouldThrowWhenFeatureNull() {
+        assertThrows(IllegalArgumentException.class,
+                () -> guard.markSuccess(1L, null, AiKeyMode.BUILTIN));
+    }
+
+    @Test
+    void markSuccessShouldThrowWhenKeyModeNull() {
+        assertThrows(IllegalArgumentException.class,
+                () -> guard.markSuccess(1L, AiFeature.AI_CHAT, null));
+    }
+
+    @Test
     void markSuccessShouldNotThrowWithValidParams() {
         assertDoesNotThrow(() -> guard.markSuccess(1L, AiFeature.AI_CHAT, AiKeyMode.BUILTIN));
+    }
+
+    @Test
+    void markFailureShouldThrowWhenUserIdNull() {
+        assertThrows(IllegalArgumentException.class,
+                () -> guard.markFailure(null, AiFeature.AI_CHAT, AiKeyMode.BUILTIN, new RuntimeException("x")));
+    }
+
+    @Test
+    void markFailureShouldThrowWhenFeatureNull() {
+        assertThrows(IllegalArgumentException.class,
+                () -> guard.markFailure(1L, null, AiKeyMode.BUILTIN, new RuntimeException("x")));
+    }
+
+    @Test
+    void markFailureShouldThrowWhenKeyModeNull() {
+        assertThrows(IllegalArgumentException.class,
+                () -> guard.markFailure(1L, AiFeature.AI_CHAT, null, new RuntimeException("x")));
     }
 
     @Test

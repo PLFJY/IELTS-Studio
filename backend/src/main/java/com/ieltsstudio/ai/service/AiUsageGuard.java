@@ -38,15 +38,7 @@ public class AiUsageGuard {
      * <p>本阶段：仅做基础参数校验 + 日志。</p>
      */
     public void checkBeforeCall(Long userId, AiFeature feature, AiKeyMode keyMode) {
-        if (userId == null) {
-            throw new IllegalArgumentException("userId must not be null");
-        }
-        if (feature == null) {
-            throw new IllegalArgumentException("AiFeature must not be null");
-        }
-        if (keyMode == null) {
-            throw new IllegalArgumentException("AiKeyMode must not be null");
-        }
+        validate(userId, feature, keyMode);
         // TODO(后续阶段): BUILTIN 模式查 ai_usage_quota 校验 credits；USER 模式做 rate limit
         log.debug("AiUsageGuard.checkBeforeCall user={} feature={} keyMode={} (no-op)", userId, feature, keyMode);
     }
@@ -63,6 +55,7 @@ public class AiUsageGuard {
      * <p>本阶段：仅记日志。</p>
      */
     public void markSuccess(Long userId, AiFeature feature, AiKeyMode keyMode) {
+        validate(userId, feature, keyMode);
         // TODO(后续阶段): 扣减 credits 并写流水
         log.info("AiUsageGuard.markSuccess user={} feature={} keyMode={} (no-op)", userId, feature, keyMode);
     }
@@ -76,11 +69,25 @@ public class AiUsageGuard {
      * <p>本阶段：仅记日志，异常 message 取其类名 + 简短信息，避免泄露。</p>
      */
     public void markFailure(Long userId, AiFeature feature, AiKeyMode keyMode, Exception ex) {
+        validate(userId, feature, keyMode);
         String exSummary = ex == null ? "null"
                 : ex.getClass().getSimpleName() + ": " + sanitize(ex.getMessage());
         // TODO(后续阶段): 写失败流水（不扣费）
         log.info("AiUsageGuard.markFailure user={} feature={} keyMode={} ex={} (no-op)",
                 userId, feature, keyMode, exSummary);
+    }
+
+    /** 统一基础参数校验，三个入口方法共用 */
+    private void validate(Long userId, AiFeature feature, AiKeyMode keyMode) {
+        if (userId == null) {
+            throw new IllegalArgumentException("userId must not be null");
+        }
+        if (feature == null) {
+            throw new IllegalArgumentException("AiFeature must not be null");
+        }
+        if (keyMode == null) {
+            throw new IllegalArgumentException("AiKeyMode must not be null");
+        }
     }
 
     /** 简单脱敏：截断过长异常 message，避免把 provider 原始 body 写进日志 */
