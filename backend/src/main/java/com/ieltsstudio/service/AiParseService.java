@@ -457,8 +457,11 @@ public class AiParseService {
                     .jsonMode(true)
                     .timeoutSeconds(60)
                     .build());
+            // 只有 provider 调用成功 + 内容解析成功才记 markSuccess，
+            // 否则解析异常会进入 catch 走 markFailure，避免一次调用同时记成功与失败。
+            Map<String, Object> parsed = (Map<String, Object>) objectMapper.readValue(response.getContent(), Map.class);
             aiUsageGuard.markSuccess(userId, AiFeature.WRITING_GRADE, credentials.getKeyMode());
-            return (Map<String, Object>) objectMapper.readValue(response.getContent(), Map.class);
+            return parsed;
         } catch (Exception ex) {
             aiUsageGuard.markFailure(userId, AiFeature.WRITING_GRADE, credentials.getKeyMode(), ex);
             throw aiCallFailed(ex);
@@ -873,12 +876,14 @@ public class AiParseService {
                     .jsonMode(true)
                     .timeoutSeconds(60)
                     .build());
-            aiUsageGuard.markSuccess(userId, AiFeature.TRANSLATE, credentials.getKeyMode());
             String content = response.getContent();
             if (content == null || content.isBlank()) {
                 throw new RuntimeException("翻译结果为空");
             }
-            return (Map<String, Object>) objectMapper.readValue(content, Map.class);
+            // 只有 provider 调用成功 + 内容非空 + JSON 解析成功才记 markSuccess。
+            Map<String, Object> parsed = (Map<String, Object>) objectMapper.readValue(content, Map.class);
+            aiUsageGuard.markSuccess(userId, AiFeature.TRANSLATE, credentials.getKeyMode());
+            return parsed;
         } catch (Exception ex) {
             aiUsageGuard.markFailure(userId, AiFeature.TRANSLATE, credentials.getKeyMode(), ex);
             throw aiCallFailed(ex);

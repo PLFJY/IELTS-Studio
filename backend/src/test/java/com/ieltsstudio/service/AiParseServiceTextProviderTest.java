@@ -141,6 +141,55 @@ class AiParseServiceTextProviderTest {
         assertTrue(ex.getMessage().contains("AI 服务暂时不可用"));
     }
 
+    // ── 3b. Phase 5A-polish：provider 返回但内容不可用时不记 markSuccess ─────────
+    //
+    // provider 调用本身成功，但返回内容不是合法 JSON / 为空时，
+    // 应走 markFailure，且不应先 markSuccess（避免一次调用同时记成功与失败、失败仍被扣费）。
+
+    @Test
+    void gradeWritingShouldMarkFailureWhenResponseJsonInvalid() throws Exception {
+        when(aiSettingsService.resolve(USER_ID, AiTaskType.TEXT)).thenReturn(userCreds());
+        when(openAiCompatibleClient.chat(any(AiChatRequest.class)))
+                .thenReturn(response("not json"));
+
+        RuntimeException ex = assertThrows(RuntimeException.class,
+                () -> service.gradeWriting(USER_ID, "prompt", "This is a valid essay content.", 250));
+
+        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.WRITING_GRADE, AiKeyMode.USER);
+        verify(aiUsageGuard).markFailure(eq(USER_ID), eq(AiFeature.WRITING_GRADE), eq(AiKeyMode.USER), any());
+        verify(aiUsageGuard, never()).markSuccess(any(), any(), any());
+        // 异常 message 不含 API Key
+        assertFalse(ex.getMessage().contains(USER_KEY));
+        assertFalse(ex.getMessage().contains("sk-"));
+    }
+
+    @Test
+    void translateShouldMarkFailureWhenResponseJsonInvalid() throws Exception {
+        when(aiSettingsService.resolve(USER_ID, AiTaskType.TEXT)).thenReturn(userCreds());
+        when(openAiCompatibleClient.chat(any(AiChatRequest.class)))
+                .thenReturn(response("not json"));
+
+        assertThrows(RuntimeException.class,
+                () -> service.translateWithContext(USER_ID, "passage", "selected text"));
+
+        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.TRANSLATE, AiKeyMode.USER);
+        verify(aiUsageGuard).markFailure(eq(USER_ID), eq(AiFeature.TRANSLATE), eq(AiKeyMode.USER), any());
+        verify(aiUsageGuard, never()).markSuccess(any(), any(), any());
+    }
+
+    @Test
+    void translateShouldMarkFailureWhenResponseContentEmpty() throws Exception {
+        when(aiSettingsService.resolve(USER_ID, AiTaskType.TEXT)).thenReturn(userCreds());
+        when(openAiCompatibleClient.chat(any(AiChatRequest.class)))
+                .thenReturn(response(""));
+
+        assertThrows(RuntimeException.class,
+                () -> service.translateWithContext(USER_ID, "passage", "selected text"));
+
+        verify(aiUsageGuard).markFailure(eq(USER_ID), eq(AiFeature.TRANSLATE), eq(AiKeyMode.USER), any());
+        verify(aiUsageGuard, never()).markSuccess(any(), any(), any());
+    }
+
     // ── 4. 输入校验 ────────────────────────────────────────────────────────────
 
     @Test
