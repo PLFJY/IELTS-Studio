@@ -59,4 +59,16 @@ class AiFeatureTest {
         assertEquals(AiTaskType.VISION, AiFeature.EXAM_PRECISE_PARSE.getTaskType());
         assertEquals(10, AiFeature.EXAM_PRECISE_PARSE.getBuiltinCost());
     }
+
+    @Test
+    void writingGuidanceShouldBeTextCost1() {
+        assertEquals(AiTaskType.TEXT, AiFeature.WRITING_GUIDANCE.getTaskType());
+        assertEquals(1, AiFeature.WRITING_GUIDANCE.getBuiltinCost());
+    }
+
+    @Test
+    void headingExtractShouldBeTextCost1() {
+        assertEquals(AiTaskType.TEXT, AiFeature.HEADING_EXTRACT.getTaskType());
+        assertEquals(1, AiFeature.HEADING_EXTRACT.getBuiltinCost());
+    }
 }

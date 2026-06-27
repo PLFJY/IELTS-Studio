@@ -435,7 +435,7 @@ public class AsyncParseService {
 
             // Post-process: enrich options, fix missing heading questions, etc.
             String combinedPassageText = String.join("\n", allPassages);
-            aiParseService.postProcess(merged, combinedPassageText);
+            aiParseService.postProcess(userId, merged, combinedPassageText);
             // Extract structured charts/tables from passages (backward compatible)
             Map<String, Object> visual = VisualBlockConverter.extract(allPassages);
             merged.put("charts", visual.get("charts"));
@@ -455,7 +455,7 @@ public class AsyncParseService {
             // Post-process: enrich options, fix missing heading questions, etc.
             List<String> singlePassages = (List<String>) parsed.get("passages");
             String singlePassageText = singlePassages != null ? String.join("\n", singlePassages) : "";
-            aiParseService.postProcess(parsed, singlePassageText);
+            aiParseService.postProcess(userId, parsed, singlePassageText);
             // Extract structured charts/tables from passages (backward compatible)
             if (singlePassages != null) {
                 Map<String, Object> visual = VisualBlockConverter.extract(singlePassages);
@@ -696,7 +696,7 @@ public class AsyncParseService {
             result.put("questions", allQuestions);
 
             // Post-process: enrich options, fix locatorText, etc.
-            aiParseService.postProcess(result, text);
+            aiParseService.postProcess(userId, result, text);
             // Extract structured charts/tables from passages (backward compatible)
             List<String> pv = (List<String>) result.get("passages");
             if (pv != null) {
@@ -1046,7 +1046,7 @@ public class AsyncParseService {
                             && aiParseService != null && aiParseService.isConfigured()) {
                         try {
                             String fullWritingText = (rawText != null && !rawText.isBlank()) ? rawText : text;
-                            Map<String, Object> retry = aiParseService.generateWritingGuidance(fullWritingText);
+                            Map<String, Object> retry = aiParseService.generateWritingGuidance(userId, fullWritingText);
                             if (retry != null) {
                                 Object rAns = retry.get("answer");
                                 Object rExp = retry.get("explanation");

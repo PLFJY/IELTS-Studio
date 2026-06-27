@@ -1,6 +1,5 @@
 package com.ieltsstudio.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ieltsstudio.ai.AiFeature;
 import com.ieltsstudio.ai.AiTaskType;
@@ -12,35 +11,13 @@ import com.ieltsstudio.ai.model.AiCredentials;
 import com.ieltsstudio.ai.service.AiSettingsService;
 import com.ieltsstudio.ai.service.AiUsageGuard;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.util.*;
 
 @Slf4j
 @Service
 public class AiParseService {
-
-    @Value("${ai.deepseek.api-key:}")
-    private String apiKey;
-
-    @Value("${ai.deepseek.base-url:https://api.deepseek.com}")
-    private String baseUrl;
-
-    @Value("${ai.deepseek.model:deepseek-chat}")
-    private String model;
-
-    @Value("${ai.deepseek.max-tokens:4096}")
-    private int maxTokens;
-
-    @Value("${ai.deepseek.text-max-chars:12000}")
-    private int textMaxChars;
 
     private final ObjectMapper objectMapper;
 
@@ -48,10 +25,6 @@ public class AiParseService {
     private final AiSettingsService aiSettingsService;
     private final AiUsageGuard aiUsageGuard;
     private final OpenAiCompatibleClient openAiCompatibleClient;
-
-    private static final HttpClient SHARED_HTTP_CLIENT = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(15))
-            .build();
 
     private static final java.util.regex.Pattern OPTION_LINE_PATTERN =
             java.util.regex.Pattern.compile("^([A-Q])\\s{2,}(.+)$");
@@ -62,7 +35,7 @@ public class AiParseService {
     private static final java.util.regex.Pattern HEADING_LINE_PATTERN =
             java.util.regex.Pattern.compile("^(i{1,3}|iv|vi{0,3}|ix|x)\\s{2,}(.+)$", java.util.regex.Pattern.CASE_INSENSITIVE);
 
-    /** 普通文本解析单次输入的字符上限（沿用旧 textMaxChars 默认值）。 */
+    /** 普通文本解析单次输入的字符上限。 */
     private static final int TEXT_MAX_CHARS = 12000;
 
     private static final String SYSTEM_PROMPT = """
@@ -162,20 +135,12 @@ public class AiParseService {
             """;
 
     /**
-     * Phase 5C-1：普通文本解析已接入新 Provider 架构，AI 调用统一走
-     * {@link AiSettingsService#resolve}，因此本方法始终返回 true，
+     * Phase 5C-3：所有 AI 调用已接入新 Provider 架构，统一走
+     * {@link AiSettingsService#resolve}，本方法始终返回 true，
      * 避免在 USER 模式下因站点内置 DeepSeek key 为空而被误判为“AI not configured”。
-     *
-     * <p>仍依赖旧 DeepSeek HttpClient 的方法（{@link #generateWritingGuidance}、
-     * {@link #extractHeadingsWithAi}）请改用 {@link #hasLegacyDeepSeekKey()} 判断。
      */
     public boolean isConfigured() {
         return true;
-    }
-
-    /** 旧 DeepSeek 直连 client 是否可用（仅未迁移的 writing guidance / heading 抽取使用）。 */
-    private boolean hasLegacyDeepSeekKey() {
-        return apiKey != null && !apiKey.isBlank();
     }
 
     /**
@@ -252,7 +217,7 @@ public class AiParseService {
         }
         // postProcess 不属于 provider 调用，放在 markSuccess 之后，
         // 这样 postProcess 失败不会把一次成功的 provider 调用误记为 markFailure。
-        postProcess(parsed, input);
+        postProcess(userId, parsed, input);
         return parsed;
     }
 
@@ -263,11 +228,26 @@ public class AiParseService {
      * - Validate and correct locatorText against passages/raw text
      *
      * This is public so that AsyncParseService can call it after assembling workflow results.
+     *
+     * <p>Phase 5C-3：旧 {@code postProcess(parsed, rawText)} 仅做 regex / local fixes，
+     * <b>不</b>触发 AI heading fallback；新 {@link #postProcess(Long, Map, String)}
+     * 允许 heading AI fallback。</p>
      */
     public void postProcess(Map<String, Object> parsed, String rawText) {
         fixInlineStringOptions(parsed, rawText);
         fixLetterOnlyMcqOptions(parsed, rawText);
-        fixRangeOptions(parsed, rawText);
+        fixRangeOptions(null, parsed, rawText);
+        fixMissingHeadingQuestions(parsed, rawText);
+        fixLocatorText(parsed, rawText);
+    }
+
+    /**
+     * Phase 5C-3：带 userId 的 postProcess，允许 heading AI fallback（走新 Provider 架构）。
+     */
+    public void postProcess(Long userId, Map<String, Object> parsed, String rawText) {
+        fixInlineStringOptions(parsed, rawText);
+        fixLetterOnlyMcqOptions(parsed, rawText);
+        fixRangeOptions(userId, parsed, rawText);
         fixMissingHeadingQuestions(parsed, rawText);
         fixLocatorText(parsed, rawText);
     }
@@ -367,7 +347,7 @@ public class AiParseService {
         if (sectionsObj instanceof List) {
             for (Object secObj : (List<?>) sectionsObj) {
                 if (secObj instanceof Map) {
-                    postProcess((Map<String, Object>) secObj, input);
+                    postProcess(userId, (Map<String, Object>) secObj, input);
                 }
             }
         }
@@ -551,39 +531,6 @@ public class AiParseService {
         this.openAiCompatibleClient = openAiCompatibleClient;
     }
 
-    // ── Generic DeepSeek call helper ──────────────────────────────────────────
-
-    private String callDeepSeek(String systemPrompt, String userMessage, int tokens, int timeoutSec) throws Exception {
-        return callDeepSeek(systemPrompt, userMessage, tokens, timeoutSec, true);
-    }
-
-    private String callDeepSeek(String systemPrompt, String userMessage, int tokens, int timeoutSec, boolean jsonMode) throws Exception {
-        Map<String, Object> requestBody = new LinkedHashMap<>();
-        requestBody.put("model", model);
-        requestBody.put("max_tokens", tokens);
-        if (jsonMode) {
-            requestBody.put("response_format", Map.of("type", "json_object"));
-        }
-        requestBody.put("messages", List.of(
-                Map.of("role", "system", "content", systemPrompt),
-                Map.of("role", "user", "content", userMessage)
-        ));
-        String requestJson = objectMapper.writeValueAsString(requestBody);
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(baseUrl + "/chat/completions"))
-                .header("Content-Type", "application/json")
-                .header("Authorization", "Bearer " + apiKey)
-                .POST(HttpRequest.BodyPublishers.ofString(requestJson, StandardCharsets.UTF_8))
-                .timeout(Duration.ofSeconds(timeoutSec))
-                .build();
-        HttpResponse<String> response = SHARED_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
-        if (response.statusCode() >= 400) {
-            throw new RuntimeException("DeepSeek API错误 HTTP " + response.statusCode() + ": " + response.body());
-        }
-        JsonNode root = objectMapper.readTree(response.body());
-        return root.path("choices").get(0).path("message").path("content").asText();
-    }
-
     // ── Writing guidance retry (lightweight) ─────────────────────────────────
 
     private static final String WRITING_GUIDANCE_PROMPT = """
@@ -610,11 +557,18 @@ public class AiParseService {
             - 只返回 JSON 对象本体，不要 markdown，不要额外说明。
             """;
 
+    /**
+     * Phase 5C-3：写作要点生成迁移到新 Provider 架构。
+     *
+     * <p>流程：{@code AiSettingsService.resolve(userId, TEXT)} →
+     * {@code AiUsageGuard.checkBeforeCall(userId, WRITING_GUIDANCE, keyMode)} →
+     * {@code OpenAiCompatibleClient.chat(...)} (jsonMode=true, maxTokens=600, timeout=60) →
+     * JSON 解析成功后 {@code markSuccess} / 任何异常 {@code markFailure}。</p>
+     *
+     * <p>保留输入长度限制：少于 40 字符拒绝，超过 8000 截断。</p>
+     */
     @SuppressWarnings("unchecked")
-    public Map<String, Object> generateWritingGuidance(String fullWritingText) throws Exception {
-        if (!hasLegacyDeepSeekKey()) {
-            throw new IllegalStateException("DeepSeek API key未配置");
-        }
+    public Map<String, Object> generateWritingGuidance(Long userId, String fullWritingText) throws Exception {
         if (fullWritingText == null || fullWritingText.trim().length() < 40) {
             throw new IllegalArgumentException("writing text too short");
         }
@@ -622,16 +576,31 @@ public class AiParseService {
         if (input.length() > 8000) {
             input = input.substring(0, 8000) + "\n...[截断]";
         }
-        String content = callDeepSeek(
-                WRITING_GUIDANCE_PROMPT,
-                "请基于以下写作题原文生成写作要点 JSON：\n\n" + input,
-                600,
-                60
-        );
-        if (content != null && content.startsWith("```")) {
-            content = content.replaceAll("^```[a-z]*\\n?", "").replaceAll("\\n?```$", "").trim();
+
+        AiCredentials credentials = aiSettingsService.resolve(userId, AiTaskType.TEXT);
+        aiUsageGuard.checkBeforeCall(userId, AiFeature.WRITING_GUIDANCE, credentials.getKeyMode());
+        try {
+            AiChatResponse response = openAiCompatibleClient.chat(AiChatRequest.builder()
+                    .credentials(credentials)
+                    .messages(List.of(
+                            AiChatMessage.system(WRITING_GUIDANCE_PROMPT),
+                            AiChatMessage.user("请基于以下写作题原文生成写作要点 JSON：\n\n" + input)))
+                    .maxTokens(600)
+                    .temperature(0.2)
+                    .jsonMode(true)
+                    .timeoutSeconds(60)
+                    .build());
+            String content = response.getContent();
+            if (content != null && content.startsWith("```")) {
+                content = content.replaceAll("^```[a-z]*\\n?", "").replaceAll("\\n?```$", "").trim();
+            }
+            Map<String, Object> parsed = objectMapper.readValue(content, Map.class);
+            aiUsageGuard.markSuccess(userId, AiFeature.WRITING_GUIDANCE, credentials.getKeyMode());
+            return parsed;
+        } catch (Exception ex) {
+            aiUsageGuard.markFailure(userId, AiFeature.WRITING_GUIDANCE, credentials.getKeyMode(), ex);
+            throw aiCallFailed(ex);
         }
-        return objectMapper.readValue(content, Map.class);
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -1183,7 +1152,7 @@ public class AiParseService {
      * and replace with properly extracted heading/option objects from raw text.
      */
     @SuppressWarnings("unchecked")
-    private void fixRangeOptions(Map<String, Object> parsed, String rawText) {
+    private void fixRangeOptions(Long userId, Map<String, Object> parsed, String rawText) {
         Object questionsObj = parsed.get("questions");
         if (!(questionsObj instanceof List)) return;
         List<Map<String, Object>> questions = (List<Map<String, Object>>) questionsObj;
@@ -1199,7 +1168,7 @@ public class AiParseService {
             if (opts instanceof String) {
                 String s = ((String) opts).trim();
                 if (s.matches("(?i)[ivx]+-[ivx]+") || s.matches("[A-Z]-[A-Z]")) {
-                    if (headingMap == null) headingMap = getHeadingMap(rawText);
+                    if (headingMap == null) headingMap = getHeadingMap(userId, rawText);
                     if (!headingMap.isEmpty()) {
                         q.put("options", new LinkedHashMap<>(headingMap));
                         log.info("fixRangeOptions: replaced range '{}' with {} extracted headings for Q{}",
@@ -1215,7 +1184,7 @@ public class AiParseService {
                     return v.matches("^(i{1,3}|iv|vi{0,3}|ix|x{1,3})$");
                 });
                 if (allRomanNumerals) {
-                    if (headingMap == null) headingMap = getHeadingMap(rawText);
+                    if (headingMap == null) headingMap = getHeadingMap(userId, rawText);
                     if (!headingMap.isEmpty()) {
                         Map<String, String> enriched = new LinkedHashMap<>();
                         for (Object o : list) {
@@ -1246,7 +1215,7 @@ public class AiParseService {
                     return k.equals(v) && k.matches("^(i{1,3}|iv|vi{0,3}|ix|x{1,3})$");
                 });
                 if (allRomanKV) {
-                    if (headingMap == null) headingMap = getHeadingMap(rawText);
+                    if (headingMap == null) headingMap = getHeadingMap(userId, rawText);
                     if (!headingMap.isEmpty()) {
                         Map<String, String> enriched = new LinkedHashMap<>();
                         for (Object key : map.keySet()) {
@@ -1264,12 +1233,16 @@ public class AiParseService {
 
     /**
      * Get heading descriptions: try regex extraction first, fall back to AI extraction.
+     *
+     * <p>Phase 5C-3：{@code userId == null} 时跳过 AI fallback（旧 {@code postProcess(parsed, rawText)}
+     * 走此路径，仅做 regex / local fixes）；{@code userId != null} 时走新 Provider 架构的 AI fallback。</p>
      */
-    private Map<String, String> getHeadingMap(String rawText) {
+    private Map<String, String> getHeadingMap(Long userId, String rawText) {
         Map<String, String> headings = extractHeadingDescriptions(rawText);
         if (headings.size() >= 3) return headings;
+        if (userId == null) return headings;
         log.info("getHeadingMap: regex extraction found only {} headings, trying AI fallback", headings.size());
-        Map<String, String> aiHeadings = extractHeadingsWithAi(rawText);
+        Map<String, String> aiHeadings = extractHeadingsWithAi(userId, rawText);
         return aiHeadings.size() >= 3 ? aiHeadings : headings;
     }
 
@@ -1489,25 +1462,51 @@ public class AiParseService {
             """;
 
     /**
-     * Fallback: use AI to extract heading descriptions when regex extraction fails.
-     * Returns a map of roman numeral -> heading description, or empty map if failed.
+     * Phase 5C-3：使用 AI 抽取 heading 列表的 fallback。
+     *
+     * <p>流程：{@code AiSettingsService.resolve(userId, TEXT)} →
+     * {@code AiUsageGuard.checkBeforeCall(userId, HEADING_EXTRACT, keyMode)} →
+     * {@code OpenAiCompatibleClient.chat(...)} (jsonMode=true, maxTokens=1024, timeout=60) →
+     * JSON 解析成功后 {@code markSuccess} / 任何异常 {@code markFailure}。</p>
+     *
+     * <p>失败时返回 {@link Map#of()}，不抛出 —— 这是 fallback 辅助，
+     * 不应因为失败导致整份试卷解析失败。日志只输出异常类名，不输出 message，
+     * 避免泄露 provider 原始 body。</p>
      */
     @SuppressWarnings("unchecked")
-    private Map<String, String> extractHeadingsWithAi(String rawText) {
-        if (!hasLegacyDeepSeekKey() || rawText == null) return Map.of();
+    private Map<String, String> extractHeadingsWithAi(Long userId, String rawText) {
+        if (rawText == null) return Map.of();
+        AiCredentials credentials;
         try {
-            String input = rawText.length() > textMaxChars
-                    ? rawText.substring(0, textMaxChars) : rawText;
+            credentials = aiSettingsService.resolve(userId, AiTaskType.TEXT);
+        } catch (Exception e) {
+            log.warn("extractHeadingsWithAi: resolve failed: {}", e.getClass().getSimpleName());
+            return Map.of();
+        }
+        aiUsageGuard.checkBeforeCall(userId, AiFeature.HEADING_EXTRACT, credentials.getKeyMode());
+        try {
+            String input = rawText.length() > TEXT_MAX_CHARS
+                    ? rawText.substring(0, TEXT_MAX_CHARS) : rawText;
             log.info("extractHeadingsWithAi: calling AI to extract heading list...");
-            String content = callDeepSeek(HEADING_EXTRACTION_PROMPT,
-                    "请从以下IELTS试题文本中提取 List of Headings 中的所有标题选项：\n\n" + input,
-                    1024, 60);
-            Map<String, String> result = objectMapper.readValue(content,
+            AiChatResponse response = openAiCompatibleClient.chat(AiChatRequest.builder()
+                    .credentials(credentials)
+                    .messages(List.of(
+                            AiChatMessage.system(HEADING_EXTRACTION_PROMPT),
+                            AiChatMessage.user("请从以下IELTS试题文本中提取 List of Headings 中的所有标题选项：\n\n" + input)))
+                    .maxTokens(1024)
+                    .temperature(0.1)
+                    .jsonMode(true)
+                    .timeoutSeconds(60)
+                    .build());
+            Map<String, String> result = objectMapper.readValue(response.getContent(),
                     objectMapper.getTypeFactory().constructMapType(LinkedHashMap.class, String.class, String.class));
             log.info("extractHeadingsWithAi: extracted {} headings", result.size());
+            aiUsageGuard.markSuccess(userId, AiFeature.HEADING_EXTRACT, credentials.getKeyMode());
             return result;
-        } catch (Exception e) {
-            log.warn("extractHeadingsWithAi failed: {}", e.getMessage());
+        } catch (Exception ex) {
+            // 仅记异常类名，避免把 provider body（即使已被脱敏）写入日志
+            log.warn("extractHeadingsWithAi failed: {}", ex.getClass().getSimpleName());
+            aiUsageGuard.markFailure(userId, AiFeature.HEADING_EXTRACT, credentials.getKeyMode(), ex);
             return Map.of();
         }
     }

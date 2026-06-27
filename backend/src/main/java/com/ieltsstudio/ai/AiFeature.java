@@ -33,7 +33,13 @@ public enum AiFeature {
     EXAM_PARSE(AiTaskType.TEXT, 5),
 
     /** 精准视觉解析（/exams/upload 精准模式，走 Vision Provider），多模态任务，cost=10 */
-    EXAM_PRECISE_PARSE(AiTaskType.VISION, 10);
+    EXAM_PRECISE_PARSE(AiTaskType.VISION, 10),
+
+    /** 写作题自动生成思路/要点（commitSection 写作 retry），文本任务，cost=1 */
+    WRITING_GUIDANCE(AiTaskType.TEXT, 1),
+
+    /** 标题列表抽取（heading extraction fallback），文本任务，cost=1 */
+    HEADING_EXTRACT(AiTaskType.TEXT, 1);
 
     /** 该功能所属的任务类型 */
     private final AiTaskType taskType;
