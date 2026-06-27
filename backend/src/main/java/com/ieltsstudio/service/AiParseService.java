@@ -2,6 +2,15 @@ package com.ieltsstudio.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ieltsstudio.ai.AiFeature;
+import com.ieltsstudio.ai.AiTaskType;
+import com.ieltsstudio.ai.client.OpenAiCompatibleClient;
+import com.ieltsstudio.ai.model.AiChatMessage;
+import com.ieltsstudio.ai.model.AiChatRequest;
+import com.ieltsstudio.ai.model.AiChatResponse;
+import com.ieltsstudio.ai.model.AiCredentials;
+import com.ieltsstudio.ai.service.AiSettingsService;
+import com.ieltsstudio.ai.service.AiUsageGuard;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -34,6 +43,11 @@ public class AiParseService {
     private int textMaxChars;
 
     private final ObjectMapper objectMapper;
+
+    /** 新 AI Provider 架构：凭据解析 / 用量守卫 / 统一客户端（文本类任务接入） */
+    private final AiSettingsService aiSettingsService;
+    private final AiUsageGuard aiUsageGuard;
+    private final OpenAiCompatibleClient openAiCompatibleClient;
 
     private static final HttpClient SHARED_HTTP_CLIENT = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(15))
@@ -409,44 +423,46 @@ public class AiParseService {
             """;
 
     @SuppressWarnings("unchecked")
-    public Map<String, Object> gradeWriting(String taskPrompt, String userEssay, int wordLimit) throws Exception {
-        if (!isConfigured()) {
-            throw new IllegalStateException("DeepSeek API key未配置");
+    public Map<String, Object> gradeWriting(Long userId, String taskPrompt, String userEssay, int wordLimit) throws Exception {
+        if (userEssay == null || userEssay.isBlank()) {
+            throw new IllegalArgumentException("学生作文不能为空");
         }
-        String trimmedEssay = userEssay == null ? "" : userEssay.trim();
-        int actualWords = trimmedEssay.isEmpty() ? 0 : trimmedEssay.split("\\s+").length;
+        if (userEssay.length() > 8000) {
+            throw new IllegalArgumentException("学生作文过长（最多 8000 字符），请精简后重试");
+        }
+        String taskPromptStr = taskPrompt == null ? "" : taskPrompt;
+
+        String trimmedEssay = userEssay.trim();
+        int actualWords = trimmedEssay.split("\\s+").length;
         String taskType = wordLimit <= 150 ? "Task 1" : "Task 2";
         String userMsg = "题目类型\n" + taskType
-                + "\n\n题目\n" + taskPrompt
+                + "\n\n题目\n" + taskPromptStr
                 + "\n\n学生作文\n" + userEssay
                 + "\n\n评分要求\n"
                 + "- 要求字数: " + wordLimit + "词\n"
                 + "- 实际字数: " + actualWords + "词\n"
                 + "- 请严格依据 IELTS Writing 官方四项标准评分，并给出总分与分项分\n"
                 + "- 若低于字数要求、偏题、论证不足、缺少 overview/比较、语法错误频繁，应明确反映在分数和反馈中";
-        Map<String, Object> requestBody = new LinkedHashMap<>();
-        requestBody.put("model", model);
-        requestBody.put("max_tokens", 1024);
-        requestBody.put("response_format", Map.of("type", "json_object"));
-        requestBody.put("messages", List.of(
-                Map.of("role", "system", "content", GRADE_PROMPT),
-                Map.of("role", "user", "content", userMsg)
-        ));
-        String requestJson = objectMapper.writeValueAsString(requestBody);
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(baseUrl + "/chat/completions"))
-                .header("Content-Type", "application/json")
-                .header("Authorization", "Bearer " + apiKey)
-                .POST(HttpRequest.BodyPublishers.ofString(requestJson, StandardCharsets.UTF_8))
-                .timeout(Duration.ofSeconds(60))
-                .build();
-        HttpResponse<String> response = SHARED_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
-        if (response.statusCode() >= 400) {
-            throw new RuntimeException("DeepSeek API错误 HTTP " + response.statusCode());
+
+        AiCredentials credentials = aiSettingsService.resolve(userId, AiTaskType.TEXT);
+        aiUsageGuard.checkBeforeCall(userId, AiFeature.WRITING_GRADE, credentials.getKeyMode());
+        try {
+            AiChatResponse response = openAiCompatibleClient.chat(AiChatRequest.builder()
+                    .credentials(credentials)
+                    .messages(List.of(
+                            AiChatMessage.system(GRADE_PROMPT),
+                            AiChatMessage.user(userMsg)))
+                    .maxTokens(1024)
+                    .temperature(0.2)
+                    .jsonMode(true)
+                    .timeoutSeconds(60)
+                    .build());
+            aiUsageGuard.markSuccess(userId, AiFeature.WRITING_GRADE, credentials.getKeyMode());
+            return (Map<String, Object>) objectMapper.readValue(response.getContent(), Map.class);
+        } catch (Exception ex) {
+            aiUsageGuard.markFailure(userId, AiFeature.WRITING_GRADE, credentials.getKeyMode(), ex);
+            throw aiCallFailed(ex);
         }
-        JsonNode root = objectMapper.readTree(response.body());
-        String content = root.path("choices").get(0).path("message").path("content").asText();
-        return (Map<String, Object>) objectMapper.readValue(content, Map.class);
     }
 
     private static final String WORD_PROMPT = """
@@ -527,8 +543,14 @@ public class AiParseService {
         return entries;
     }
 
-    public AiParseService(ObjectMapper objectMapper) {
+    public AiParseService(ObjectMapper objectMapper,
+                          AiSettingsService aiSettingsService,
+                          AiUsageGuard aiUsageGuard,
+                          OpenAiCompatibleClient openAiCompatibleClient) {
         this.objectMapper = objectMapper;
+        this.aiSettingsService = aiSettingsService;
+        this.aiUsageGuard = aiUsageGuard;
+        this.openAiCompatibleClient = openAiCompatibleClient;
     }
 
     // ── Generic DeepSeek call helper ──────────────────────────────────────────
@@ -821,49 +843,46 @@ public class AiParseService {
     }
 
     @SuppressWarnings("unchecked")
-    public Map<String, Object> translateWithContext(String passage, String selectedText) throws Exception {
-        if (!isConfigured()) throw new IllegalStateException("DeepSeek API key未配置");
-        String p = passage == null ? "" : passage;
+    public Map<String, Object> translateWithContext(Long userId, String passage, String selectedText) throws Exception {
         String s = selectedText == null ? "" : selectedText.trim();
-        if (s.isBlank()) throw new IllegalArgumentException("selectedText 不能为空");
-
-        // Keep passage bounded to avoid excessive tokens
+        if (s.isBlank()) {
+            throw new IllegalArgumentException("selectedText 不能为空");
+        }
+        if (s.length() > 1000) {
+            throw new IllegalArgumentException("selectedText 过长（最多 1000 字符）");
+        }
+        String p = passage == null ? "" : passage;
+        // Keep passage bounded to avoid excessive tokens（保持旧行为）
         String truncatedPassage = p.length() > 6000 ? p.substring(0, 6000) : p;
 
-        Map<String, Object> requestBody = new LinkedHashMap<>();
-        requestBody.put("model", model);
-        requestBody.put("max_tokens", 512);
-        requestBody.put("response_format", Map.of("type", "json_object"));
-        requestBody.put("messages", List.of(
-                Map.of("role", "system", "content", TRANSLATE_PROMPT),
-                Map.of("role", "user", "content",
-                        "{" +
-                                "\"passage\":" + objectMapper.writeValueAsString(truncatedPassage) + "," +
-                                "\"selectedText\":" + objectMapper.writeValueAsString(s) +
-                                "}")
-        ));
-        String requestJson = objectMapper.writeValueAsString(requestBody);
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(baseUrl + "/chat/completions"))
-                .header("Content-Type", "application/json")
-                .header("Authorization", "Bearer " + apiKey)
-                .POST(HttpRequest.BodyPublishers.ofString(requestJson, StandardCharsets.UTF_8))
-                .build();
-        HttpResponse<String> response = SHARED_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-        if (response.statusCode() >= 400) {
-            throw new RuntimeException("DeepSeek 翻译请求失败：HTTP " + response.statusCode() + " - " + response.body());
-        }
+        String userMsg = "{"
+                + "\"passage\":" + objectMapper.writeValueAsString(truncatedPassage) + ","
+                + "\"selectedText\":" + objectMapper.writeValueAsString(s)
+                + "}";
 
-        Map<String, Object> resp = objectMapper.readValue(response.body(), Map.class);
-        Object choicesObj = resp.get("choices");
-        if (!(choicesObj instanceof List) || ((List<?>) choicesObj).isEmpty()) {
-            throw new RuntimeException("DeepSeek 返回为空");
+        AiCredentials credentials = aiSettingsService.resolve(userId, AiTaskType.TEXT);
+        aiUsageGuard.checkBeforeCall(userId, AiFeature.TRANSLATE, credentials.getKeyMode());
+        try {
+            AiChatResponse response = openAiCompatibleClient.chat(AiChatRequest.builder()
+                    .credentials(credentials)
+                    .messages(List.of(
+                            AiChatMessage.system(TRANSLATE_PROMPT),
+                            AiChatMessage.user(userMsg)))
+                    .maxTokens(512)
+                    .temperature(0.1)
+                    .jsonMode(true)
+                    .timeoutSeconds(60)
+                    .build());
+            aiUsageGuard.markSuccess(userId, AiFeature.TRANSLATE, credentials.getKeyMode());
+            String content = response.getContent();
+            if (content == null || content.isBlank()) {
+                throw new RuntimeException("翻译结果为空");
+            }
+            return (Map<String, Object>) objectMapper.readValue(content, Map.class);
+        } catch (Exception ex) {
+            aiUsageGuard.markFailure(userId, AiFeature.TRANSLATE, credentials.getKeyMode(), ex);
+            throw aiCallFailed(ex);
         }
-        Map<String, Object> choice0 = (Map<String, Object>) ((List<?>) choicesObj).get(0);
-        Map<String, Object> message = (Map<String, Object>) choice0.get("message");
-        String content = message != null ? Objects.toString(message.get("content"), "") : "";
-        if (content.isBlank()) throw new RuntimeException("DeepSeek 翻译结果为空");
-        return objectMapper.readValue(content, Map.class);
     }
 
     // ── AI Chat Assistant ────────────────────────────────────────────────────
@@ -883,16 +902,46 @@ public class AiParseService {
      * AI chat: answer user's question based on exam context.
      * Returns plain text answer (not JSON).
      */
-    public String chatWithContext(String examContext, String userQuestion) throws Exception {
-        if (!isConfigured()) throw new IllegalStateException("DeepSeek API key未配置");
+    public String chatWithContext(Long userId, String examContext, String userQuestion) throws Exception {
         if (userQuestion == null || userQuestion.trim().isBlank()) {
             throw new IllegalArgumentException("问题不能为空");
+        }
+        if (userQuestion.length() > 2000) {
+            throw new IllegalArgumentException("问题过长（最多 2000 字符）");
         }
         String ctx = examContext == null ? "" : examContext;
         if (ctx.length() > 8000) ctx = ctx.substring(0, 8000) + "\n...[截断]";
 
         String userMsg = "【试卷上下文】\n" + ctx + "\n\n【用户问题】\n" + userQuestion.trim();
-        return callDeepSeek(CHAT_ASSISTANT_PROMPT, userMsg, 1024, 60, false);
+
+        AiCredentials credentials = aiSettingsService.resolve(userId, AiTaskType.TEXT);
+        aiUsageGuard.checkBeforeCall(userId, AiFeature.AI_CHAT, credentials.getKeyMode());
+        try {
+            AiChatResponse response = openAiCompatibleClient.chat(AiChatRequest.builder()
+                    .credentials(credentials)
+                    .messages(List.of(
+                            AiChatMessage.system(CHAT_ASSISTANT_PROMPT),
+                            AiChatMessage.user(userMsg)))
+                    .maxTokens(1024)
+                    .temperature(0.3)
+                    .jsonMode(false)
+                    .timeoutSeconds(60)
+                    .build());
+            aiUsageGuard.markSuccess(userId, AiFeature.AI_CHAT, credentials.getKeyMode());
+            return response.getContent();
+        } catch (Exception ex) {
+            aiUsageGuard.markFailure(userId, AiFeature.AI_CHAT, credentials.getKeyMode(), ex);
+            throw aiCallFailed(ex);
+        }
+    }
+
+    /**
+     * 把 provider 调用相关异常脱敏后转为业务异常，
+     * 避免把原始 response body / API Key 透传给前端。
+     */
+    private RuntimeException aiCallFailed(Exception ex) {
+        log.warn("AI 调用失败: {}", ex.getClass().getSimpleName());
+        return new RuntimeException("AI 服务暂时不可用，请稍后重试");
     }
 
     /**

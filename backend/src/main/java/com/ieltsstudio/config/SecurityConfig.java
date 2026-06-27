@@ -65,7 +65,6 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()           // 放行所有 OPTIONS 预检请求
                 .requestMatchers("/auth/**").permitAll()                           // 注册/登录不需要认证
-                .requestMatchers(HttpMethod.POST, "/exams/grade-writing").permitAll() // 写作 AI 评分（允许未登录调用）
                 .requestMatchers(HttpMethod.GET, "/exams/public/**").permitAll()  // 公开试卷接口
                 .requestMatchers("/actuator/**").permitAll()                       // 健康检查接口
                 .anyRequest().authenticated()                                      // 其余接口均需登录
