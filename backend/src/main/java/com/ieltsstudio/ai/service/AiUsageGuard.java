@@ -1,80 +1,219 @@
 package com.ieltsstudio.ai.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.ieltsstudio.ai.AiFeature;
 import com.ieltsstudio.ai.AiKeyMode;
+import com.ieltsstudio.entity.AiUsageQuota;
+import com.ieltsstudio.entity.AiUsageRecord;
+import com.ieltsstudio.mapper.AiUsageQuotaMapper;
+import com.ieltsstudio.mapper.AiUsageRecordMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.temporal.TemporalAdjusters;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
+
 /**
- * AI 用量守卫骨架。
+ * AI 用量守卫：负责 credits 额度、流水记录与基础限流。
  *
- * <p>本阶段只做守卫入口与基础参数校验，<b>不</b>真正写库 / 扣费 / 限流。</p>
- *
- * <p>方法签名已为后续阶段预留：</p>
+ * <p>Phase 6A 落地实现：</p>
  * <ul>
- *   <li>{@link #checkBeforeCall(Long, AiFeature, AiKeyMode)} —— 调用前：BUILTIN 校验 credits 余量，USER 做 rate limit。</li>
- *   <li>{@link #markSuccess(Long, AiFeature, AiKeyMode)} —— 调用成功：BUILTIN 扣费，USER 计数。</li>
- *   <li>{@link #markFailure(Long, AiFeature, AiKeyMode, Exception)} —— 调用失败：记录失败流水（不扣费）。</li>
+ *   <li><b>BUILTIN 模式</b>：每用户每周 30 credits，采用「调用前预扣 + 失败回滚」模型，
+ *       保证高并发下不超卖。额度不足写 REJECTED 流水并拒绝调用。</li>
+ *   <li><b>USER 模式</b>：不消耗站点 credits，仅做单机内存 rate limit（每用户每 feature 每分钟 20 次），
+ *       超限写 REJECTED 流水并拒绝调用。</li>
+ *   <li>所有调用结果均写 {@code ai_usage_records} 流水：SUCCESS / FAILED / REJECTED。</li>
+ *   <li>errorMessage 必须脱敏，禁止记录 API Key / Authorization / provider 原始 body。</li>
  * </ul>
  *
- * <p>当前实现仅输出 debug / info 日志，不抛业务异常。</p>
+ * <p>方法签名保持稳定，调用点无需改动：</p>
+ * <ul>
+ *   <li>{@link #checkBeforeCall(Long, AiFeature, AiKeyMode)} —— 调用前：BUILTIN 预扣 credits，USER 计数限流。</li>
+ *   <li>{@link #markSuccess(Long, AiFeature, AiKeyMode)} —— 调用成功：写 SUCCESS 流水（BUILTIN 已预扣，此处不再扣费）。</li>
+ *   <li>{@link #markFailure(Long, AiFeature, AiKeyMode, Exception)} —— 调用失败：BUILTIN 回滚 credits 并写 FAILED 流水。</li>
+ * </ul>
  *
- * <p>后续阶段落地建议见 {@code docs/security-and-quota-plan.md}：
- * credits 扣费在调用<b>成功后</b>扣（避免失败也扣费）；rate limit 可复用 {@code infra/RedisOps}。</p>
+ * <p>扣费模型说明：见 {@code docs/security-and-quota-plan.md} §6「调用前预扣 + 失败回滚」。</p>
  */
 @Slf4j
 @Component
 public class AiUsageGuard {
 
+    /** 每用户每周默认发放 credits，后续可配置化 */
+    private static final int DEFAULT_WEEKLY_CREDITS = 30;
+
+    /** USER 模式基础限流：每用户每 feature 每分钟调用上限 */
+    private static final int USER_RATE_LIMIT_PER_MINUTE = 20;
+
+    private static final String STATUS_SUCCESS = "SUCCESS";
+    private static final String STATUS_FAILED = "FAILED";
+    private static final String STATUS_REJECTED = "REJECTED";
+
+    private final AiUsageQuotaMapper quotaMapper;
+    private final AiUsageRecordMapper recordMapper;
+
+    // TODO(Phase 6B): replace in-memory limiter with Redis-based distributed rate limit.
+    private final ConcurrentHashMap<String, RateWindow> rateLimitMap = new ConcurrentHashMap<>();
+
+    public AiUsageGuard(AiUsageQuotaMapper quotaMapper, AiUsageRecordMapper recordMapper) {
+        this.quotaMapper = quotaMapper;
+        this.recordMapper = recordMapper;
+    }
+
     /**
      * AI 调用前守卫。
      *
-     * <p>后续阶段实现：</p>
      * <ul>
-     *   <li>BUILTIN：校验当前周期 credits 余量是否 ≥ feature 对应 cost，不足则抛业务异常。</li>
-     *   <li>USER：按用户 / 接口做 rate limit（建议 20 次/分钟）。</li>
+     *   <li>BUILTIN：原子预扣 credits，不足则抛业务异常并写 REJECTED 流水。</li>
+     *   <li>USER：内存 rate limit 计数，超限则抛业务异常并写 REJECTED 流水。</li>
      * </ul>
-     *
-     * <p>本阶段：仅做基础参数校验 + 日志。</p>
      */
     public void checkBeforeCall(Long userId, AiFeature feature, AiKeyMode keyMode) {
         validate(userId, feature, keyMode);
-        // TODO(后续阶段): BUILTIN 模式查 ai_usage_quota 校验 credits；USER 模式做 rate limit
-        log.debug("AiUsageGuard.checkBeforeCall user={} feature={} keyMode={} (no-op)", userId, feature, keyMode);
+        if (keyMode == AiKeyMode.BUILTIN) {
+            checkBuiltin(userId, feature);
+        } else {
+            checkUserRateLimit(userId, feature);
+        }
     }
 
     /**
      * AI 调用成功后回调。
      *
-     * <p>后续阶段实现：</p>
      * <ul>
-     *   <li>BUILTIN：按 feature cost 扣减 credits，写 ai_usage_records 流水（status=SUCCESS）。</li>
-     *   <li>USER：累加计数 / 写流水（不扣站点 credits）。</li>
+     *   <li>BUILTIN：credits 已在 {@link #checkBeforeCall} 预扣，此处仅写 SUCCESS 流水，cost = feature cost。</li>
+     *   <li>USER：不消耗站点 credits，写 SUCCESS 流水，cost = 0。</li>
      * </ul>
-     *
-     * <p>本阶段：仅记日志。</p>
      */
     public void markSuccess(Long userId, AiFeature feature, AiKeyMode keyMode) {
         validate(userId, feature, keyMode);
-        // TODO(后续阶段): 扣减 credits 并写流水
-        log.info("AiUsageGuard.markSuccess user={} feature={} keyMode={} (no-op)", userId, feature, keyMode);
+        int cost = keyMode == AiKeyMode.BUILTIN ? feature.getBuiltinCost() : 0;
+        insertRecord(userId, feature, keyMode, STATUS_SUCCESS, cost, null);
+        log.info("AiUsageGuard.markSuccess user={} feature={} keyMode={} cost={}", userId, feature, keyMode, cost);
     }
 
     /**
      * AI 调用失败后回调。
      *
-     * <p>后续阶段实现：写 ai_usage_records 流水（status=FAILED），<b>不</b>扣费。
-     * 异常信息脱敏后记录（不输出 provider 原始 body / key）。</p>
+     * <ul>
+     *   <li>BUILTIN：回滚预扣的 credits，写 FAILED 流水，cost = 0（失败不消耗 credits）。</li>
+     *   <li>USER：写 FAILED 流水，cost = 0，不改 quota。</li>
+     * </ul>
      *
-     * <p>本阶段：仅记日志，异常 message 取其类名 + 简短信息，避免泄露。</p>
+     * <p>异常 message 脱敏后写入流水 errorMessage 字段。</p>
      */
     public void markFailure(Long userId, AiFeature feature, AiKeyMode keyMode, Exception ex) {
         validate(userId, feature, keyMode);
-        String exSummary = ex == null ? "null"
-                : ex.getClass().getSimpleName() + ": " + sanitize(ex.getMessage());
-        // TODO(后续阶段): 写失败流水（不扣费）
-        log.info("AiUsageGuard.markFailure user={} feature={} keyMode={} ex={} (no-op)",
-                userId, feature, keyMode, exSummary);
+        String summary = summarize(ex);
+        if (keyMode == AiKeyMode.BUILTIN) {
+            refundBuiltin(userId, feature);
+        }
+        insertRecord(userId, feature, keyMode, STATUS_FAILED, 0, summary);
+        log.info("AiUsageGuard.markFailure user={} feature={} keyMode={} ex={}", userId, feature, keyMode, summary);
+    }
+
+    // ─── BUILTIN 模式 ───────────────────────────────────────────────────────────
+
+    /** 预扣 credits：原子更新，credits_total - credits_used >= cost 才成功 */
+    private void checkBuiltin(Long userId, AiFeature feature) {
+        AiUsageQuota quota = getOrCreateCurrentQuota(userId);
+        int cost = feature.getBuiltinCost();
+        int updated = quotaMapper.update(null,
+                new LambdaUpdateWrapper<AiUsageQuota>()
+                        .eq(AiUsageQuota::getId, quota.getId())
+                        .apply("credits_total - credits_used >= {0}", cost)
+                        .setSql("credits_used = credits_used + " + cost));
+        if (updated == 0) {
+            insertRecord(userId, feature, AiKeyMode.BUILTIN, STATUS_REJECTED, 0, "INSUFFICIENT_CREDITS");
+            throw new IllegalStateException("本周 AI 额度已用完，可切换自填 Key 模式");
+        }
+    }
+
+    /** 回滚预扣的 credits：GREATEST 防止越界减为负数 */
+    private void refundBuiltin(Long userId, AiFeature feature) {
+        int cost = feature.getBuiltinCost();
+        LocalDateTime periodStart = currentPeriod().start();
+        quotaMapper.update(null,
+                new LambdaUpdateWrapper<AiUsageQuota>()
+                        .eq(AiUsageQuota::getUserId, userId)
+                        .eq(AiUsageQuota::getPeriodStart, periodStart)
+                        .setSql("credits_used = GREATEST(credits_used - " + cost + ", 0)"));
+    }
+
+    /**
+     * 获取或创建当前周期的 quota 行。
+     *
+     * <p>并发插入会因 unique key (user_id, period_start) 冲突，捕获后重新查询。</p>
+     */
+    private AiUsageQuota getOrCreateCurrentQuota(Long userId) {
+        Period period = currentPeriod();
+        LambdaQueryWrapper<AiUsageQuota> q = new LambdaQueryWrapper<AiUsageQuota>()
+                .eq(AiUsageQuota::getUserId, userId)
+                .eq(AiUsageQuota::getPeriodStart, period.start());
+        AiUsageQuota quota = quotaMapper.selectOne(q);
+        if (quota != null) {
+            return quota;
+        }
+        AiUsageQuota created = new AiUsageQuota();
+        created.setUserId(userId);
+        created.setPeriodStart(period.start());
+        created.setPeriodEnd(period.end());
+        created.setCreditsTotal(DEFAULT_WEEKLY_CREDITS);
+        created.setCreditsUsed(0);
+        try {
+            quotaMapper.insert(created);
+            return created;
+        } catch (Exception dup) {
+            // 并发插入：unique key 冲突，重新查询已插入的行
+            AiUsageQuota existing = quotaMapper.selectOne(q);
+            if (existing != null) {
+                return existing;
+            }
+            throw dup;
+        }
+    }
+
+    // ─── USER 模式限流 ─────────────────────────────────────────────────────────
+    // 单机内存限流，多实例不共享。后续 Phase 6B 改为 Redis 分布式限流。
+
+    private void checkUserRateLimit(Long userId, AiFeature feature) {
+        String key = userId + ":" + feature.name();
+        long minute = System.currentTimeMillis() / 60_000L;
+        RateWindow window = rateLimitMap.compute(key, (k, existing) ->
+                (existing == null || existing.minute != minute) ? new RateWindow(minute) : existing);
+        int count = window.count.incrementAndGet();
+        if (count > USER_RATE_LIMIT_PER_MINUTE) {
+            insertRecord(userId, feature, AiKeyMode.USER, STATUS_REJECTED, 0, "RATE_LIMITED");
+            throw new IllegalStateException("请求过于频繁，请稍后再试");
+        }
+    }
+
+    // ─── 公共辅助 ───────────────────────────────────────────────────────────────
+
+    private void insertRecord(Long userId, AiFeature feature, AiKeyMode keyMode,
+                              String status, int cost, String errorMessage) {
+        AiUsageRecord record = new AiUsageRecord();
+        record.setUserId(userId);
+        record.setTaskType(feature.getTaskType().name());
+        record.setFeature(feature.name());
+        record.setCost(cost);
+        record.setKeyMode(keyMode.name());
+        record.setProvider(null); // 当前签名拿不到 provider，统一写 null；Phase 6B 再补
+        record.setStatus(status);
+        record.setErrorMessage(sanitize(errorMessage));
+        recordMapper.insert(record);
+    }
+
+    /** 异常摘要：类名 + 简短 message，后续由 {@link #sanitize} 脱敏 */
+    private String summarize(Exception ex) {
+        if (ex == null) return null;
+        String msg = ex.getMessage();
+        return ex.getClass().getSimpleName() + ": " + (msg == null ? "" : msg);
     }
 
     /** 统一基础参数校验，三个入口方法共用 */
@@ -90,9 +229,38 @@ public class AiUsageGuard {
         }
     }
 
-    /** 简单脱敏：截断过长异常 message，避免把 provider 原始 body 写进日志 */
+    /**
+     * 脱敏：去除 API Key / Authorization / Bearer，并截断到 500 字符
+     * （与 {@code ai_usage_records.error_message} 的 VARCHAR(500) 对齐）。
+     */
     private String sanitize(String msg) {
-        if (msg == null) return "";
-        return msg.length() > 200 ? msg.substring(0, 200) + "..." : msg;
+        if (msg == null) return null;
+        String s = msg;
+        s = s.replaceAll("(?i)Authorization\\s*:\\s*Bearer\\s+\\S+", "Authorization: Bearer [REDACTED]");
+        s = s.replaceAll("(?i)Bearer\\s+\\S+", "Bearer [REDACTED]");
+        s = s.replaceAll("sk-[A-Za-z0-9_\\-]{6,}", "sk-[REDACTED]");
+        if (s.length() > 500) s = s.substring(0, 500);
+        return s;
+    }
+
+    /** 当前自然周：周一 00:00:00 到下周一 00:00:00（基于服务器默认时区） */
+    private Period currentPeriod() {
+        LocalDate monday = LocalDate.now().with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+        LocalDateTime start = monday.atStartOfDay();
+        LocalDateTime end = start.plusWeeks(1);
+        return new Period(start, end);
+    }
+
+    /** 周期区间 */
+    private record Period(LocalDateTime start, LocalDateTime end) {}
+
+    /** USER 限流滑动窗口（按分钟） */
+    private static class RateWindow {
+        final long minute;
+        final AtomicInteger count = new AtomicInteger(0);
+
+        RateWindow(long minute) {
+            this.minute = minute;
+        }
     }
 }

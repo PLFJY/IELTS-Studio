@@ -42,8 +42,10 @@ IELTS Studio 的 AI 接口会真实调用第三方 provider（DeepSeek / Qwen / 
 | Word generate（词汇生成） | quick add / 词汇文件导入触发的 AI 词条解析 | 2 |
 | Exam parse（普通试卷解析） | `/exams/upload`（普通模式） | 5 |
 | Precise vision parse（精准视觉解析） | `/exams/upload`（精准模式） | 10 |
+| Writing guidance（写作思路生成） | 写作题解析后的要点/思路补全 | 1 |
+| Heading extract（标题列表抽取） | heading matching 后处理 fallback | 1 |
 
-> cost 可后续按真实成本调整；调整时同步更新本文件。
+> cost 必须与 `AiFeature` 枚举的 `builtinCost` 保持一致；可后续按真实成本调整，调整时同步更新本文件与枚举。
 
 ---
 
@@ -111,3 +113,12 @@ IELTS Studio 的 AI 接口会真实调用第三方 provider（DeepSeek / Qwen / 
 - credits 扣费应在 AI 调用**成功后**扣（避免失败也扣费）；或调用前预扣 + 失败回滚，二选一。
 - rate limit 可复用现有 `infra/RedisOps`（Redis 可用时）或本地内存降级方案。
 - 新增表 `ai_usage_quota`（或 `ai_usage_records`）记录额度与扣费流水，设计方向见 [database-change-guide.md](./database-change-guide.md)。
+
+### 6.1 Phase 6A 已落地实现
+
+- **扣费模型**：BUILTIN 采用「调用前预扣 + 失败回滚」。`AiUsageGuard.checkBeforeCall` 通过原子 `UPDATE ... SET credits_used = credits_used + cost WHERE credits_total - credits_used >= cost` 预扣，避免高并发下超卖；`markFailure` 用 `GREATEST(credits_used - cost, 0)` 回滚。`markSuccess` 不再扣费，仅写 SUCCESS 流水。
+- **周期规则**：自然周（周一 00:00 ~ 下周一 00:00），默认每周 30 credits，quota 行按 `(user_id, period_start)` 唯一约束，并发插入冲突时回退查询。
+- **USER 模式限流**：本阶段使用**单机内存**滑动窗口（`ConcurrentHashMap` + 按分钟计数），每用户每 feature 每分钟 20 次，多实例不共享。
+- **流水状态**：`SUCCESS` / `FAILED` / `REJECTED` 三种，`REJECTED` 用于额度不足（BUILTIN）或限流触发（USER），cost 均为 0。
+- **errorMessage 脱敏**：移除 `Authorization: Bearer xxx` / `Bearer xxx` / `sk-xxx`，截断到 500 字符（对齐 `error_message VARCHAR(500)`）。
+- **待 Phase 6B**：Redis 分布式限流、额度查询接口、前端额度展示、provider 字段统计。
