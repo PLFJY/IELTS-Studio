@@ -62,6 +62,9 @@ public class AiParseService {
     private static final java.util.regex.Pattern HEADING_LINE_PATTERN =
             java.util.regex.Pattern.compile("^(i{1,3}|iv|vi{0,3}|ix|x)\\s{2,}(.+)$", java.util.regex.Pattern.CASE_INSENSITIVE);
 
+    /** 普通文本解析单次输入的字符上限（沿用旧 textMaxChars 默认值）。 */
+    private static final int TEXT_MAX_CHARS = 12000;
+
     private static final String SYSTEM_PROMPT = """
             你是一个雅思（IELTS）试卷内容解析器。给定从任意雅思试卷（阅读 / 写作 / 听力）中提取出的原始文本，
             请解析并返回一个结构化的 JSON 对象。
@@ -158,7 +161,20 @@ public class AiParseService {
             - selectedText: 用户选中的文本（英文）
             """;
 
+    /**
+     * Phase 5C-1：普通文本解析已接入新 Provider 架构，AI 调用统一走
+     * {@link AiSettingsService#resolve}，因此本方法始终返回 true，
+     * 避免在 USER 模式下因站点内置 DeepSeek key 为空而被误判为“AI not configured”。
+     *
+     * <p>仍依赖旧 DeepSeek HttpClient 的方法（{@link #generateWritingGuidance}、
+     * {@link #extractHeadingsWithAi}）请改用 {@link #hasLegacyDeepSeekKey()} 判断。
+     */
     public boolean isConfigured() {
+        return true;
+    }
+
+    /** 旧 DeepSeek 直连 client 是否可用（仅未迁移的 writing guidance / heading 抽取使用）。 */
+    private boolean hasLegacyDeepSeekKey() {
         return apiKey != null && !apiKey.isBlank();
     }
 
@@ -196,11 +212,7 @@ public class AiParseService {
     }
 
     @SuppressWarnings("unchecked")
-    public Map<String, Object> parseWithAi(String rawText) throws Exception {
-        if (!isConfigured()) {
-            throw new IllegalStateException("DeepSeek API key未配置，请在application.yml中设置 ai.deepseek.api-key 或环境变量 DEEPSEEK_API_KEY");
-        }
-
+    public Map<String, Object> parseWithAi(Long userId, String rawText) throws Exception {
         if (rawText == null || rawText.trim().length() < 80) {
             log.warn("Extracted text too short ({} chars) – likely scanned PDF, cannot parse",
                     rawText == null ? 0 : rawText.trim().length());
@@ -208,48 +220,38 @@ public class AiParseService {
         }
 
         String testText = findTestContent(rawText);
-        String input = testText.length() > textMaxChars
-                ? testText.substring(0, textMaxChars) + "\n...[截断]"
+        String input = testText.length() > TEXT_MAX_CHARS
+                ? testText.substring(0, TEXT_MAX_CHARS) + "\n...[截断]"
                 : testText;
 
-        log.info("Sending to DeepSeek: total {} chars, preview: [{}]",
+        log.info("Sending to AI (EXAM_PARSE): total {} chars, preview: [{}]",
                 input.length(),
                 input.substring(0, Math.min(150, input.length())).replace("\n", "↵"));
 
-        Map<String, Object> requestBody = new LinkedHashMap<>();
-        requestBody.put("model", model);
-        requestBody.put("max_tokens", maxTokens);
-        requestBody.put("response_format", Map.of("type", "json_object"));
-        requestBody.put("messages", List.of(
-                Map.of("role", "system", "content", SYSTEM_PROMPT),
-                Map.of("role", "user", "content",
-                        "请解析以下IELTS试题文本，返回结构化JSON：\n\n" + input)
-        ));
-
-        String requestJson = objectMapper.writeValueAsString(requestBody);
-        log.debug("Calling DeepSeek API, input length={}", input.length());
-
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(baseUrl + "/chat/completions"))
-                .header("Content-Type", "application/json")
-                .header("Authorization", "Bearer " + apiKey)
-                .POST(HttpRequest.BodyPublishers.ofString(requestJson, StandardCharsets.UTF_8))
-                .timeout(Duration.ofSeconds(90))
-                .build();
-
-        HttpResponse<String> response = SHARED_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
-
-        if (response.statusCode() >= 400) {
-            throw new RuntimeException("DeepSeek API错误 HTTP " + response.statusCode() + ": " + response.body());
+        AiCredentials credentials = aiSettingsService.resolve(userId, AiTaskType.TEXT);
+        aiUsageGuard.checkBeforeCall(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode());
+        Map<String, Object> parsed;
+        try {
+            AiChatResponse response = openAiCompatibleClient.chat(AiChatRequest.builder()
+                    .credentials(credentials)
+                    .messages(List.of(
+                            AiChatMessage.system(SYSTEM_PROMPT),
+                            AiChatMessage.user("请解析以下IELTS试题文本，返回结构化JSON：\n\n" + input)))
+                    .maxTokens(4096)
+                    .temperature(0.1)
+                    .jsonMode(true)
+                    .timeoutSeconds(90)
+                    .build());
+            // 只有 provider 调用成功 + JSON 解析成功才记 markSuccess，
+            // 否则解析异常会进入 catch 走 markFailure，避免一次调用同时记成功与失败。
+            parsed = objectMapper.readValue(response.getContent(), Map.class);
+            aiUsageGuard.markSuccess(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode());
+        } catch (Exception ex) {
+            aiUsageGuard.markFailure(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode(), ex);
+            throw aiCallFailed(ex);
         }
-
-        JsonNode root = objectMapper.readTree(response.body());
-        String content = root.path("choices").get(0)
-                .path("message").path("content").asText();
-
-        log.debug("DeepSeek response content length={}", content.length());
-
-        Map<String, Object> parsed = objectMapper.readValue(content, Map.class);
+        // postProcess 不属于 provider 调用，放在 markSuccess 之后，
+        // 这样 postProcess 失败不会把一次成功的 provider 调用误记为 markFailure。
         postProcess(parsed, input);
         return parsed;
     }
@@ -326,44 +328,33 @@ public class AiParseService {
             """;
 
     @SuppressWarnings("unchecked")
-    public Map<String, Object> detectAndParseMultiSection(String rawText) throws Exception {
-        if (!isConfigured()) throw new IllegalStateException("DeepSeek API key未配置");
-
-        String input = rawText.length() > textMaxChars
-                ? rawText.substring(0, textMaxChars) + "\n...[截断]"
+    public Map<String, Object> detectAndParseMultiSection(Long userId, String rawText) throws Exception {
+        String input = rawText.length() > TEXT_MAX_CHARS
+                ? rawText.substring(0, TEXT_MAX_CHARS) + "\n...[截断]"
                 : rawText;
 
-        Map<String, Object> requestBody = new LinkedHashMap<>();
-        requestBody.put("model", model);
-        requestBody.put("max_tokens", maxTokens);
-        requestBody.put("response_format", Map.of("type", "json_object"));
-        requestBody.put("messages", List.of(
-                Map.of("role", "system", "content", MULTI_SECTION_PROMPT),
-                Map.of("role", "user", "content",
-                        "请分析以下IELTS试题文本，检测试题分区并分别解析，返回结构化JSON：\n\n" + input)
-        ));
+        log.info("Calling AI multi-section (EXAM_PARSE), input length={}", input.length());
 
-        String requestJson = objectMapper.writeValueAsString(requestBody);
-        log.debug("Calling DeepSeek multi-section API, input length={}", input.length());
-
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(baseUrl + "/chat/completions"))
-                .header("Content-Type", "application/json")
-                .header("Authorization", "Bearer " + apiKey)
-                .POST(HttpRequest.BodyPublishers.ofString(requestJson, StandardCharsets.UTF_8))
-                .timeout(Duration.ofSeconds(120))
-                .build();
-
-        HttpResponse<String> response = SHARED_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
-        if (response.statusCode() >= 400) {
-            throw new RuntimeException("DeepSeek multi-section API错误 HTTP " + response.statusCode() + ": " + response.body());
+        AiCredentials credentials = aiSettingsService.resolve(userId, AiTaskType.TEXT);
+        aiUsageGuard.checkBeforeCall(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode());
+        Map<String, Object> result;
+        try {
+            AiChatResponse response = openAiCompatibleClient.chat(AiChatRequest.builder()
+                    .credentials(credentials)
+                    .messages(List.of(
+                            AiChatMessage.system(MULTI_SECTION_PROMPT),
+                            AiChatMessage.user("请分析以下IELTS试题文本，检测试题分区并分别解析，返回结构化JSON：\n\n" + input)))
+                    .maxTokens(4096)
+                    .temperature(0.1)
+                    .jsonMode(true)
+                    .timeoutSeconds(120)
+                    .build());
+            result = objectMapper.readValue(response.getContent(), Map.class);
+            aiUsageGuard.markSuccess(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode());
+        } catch (Exception ex) {
+            aiUsageGuard.markFailure(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode(), ex);
+            throw aiCallFailed(ex);
         }
-
-        JsonNode root = objectMapper.readTree(response.body());
-        String content = root.path("choices").get(0).path("message").path("content").asText();
-        log.debug("DeepSeek multi-section response length={}", content.length());
-
-        Map<String, Object> result = objectMapper.readValue(content, Map.class);
         // Normalise: if AI returned flat passages/questions instead of sections wrapper, wrap it
         if (!result.containsKey("sections") && result.containsKey("questions")) {
             Map<String, Object> section = new LinkedHashMap<>(result);
@@ -371,7 +362,7 @@ public class AiParseService {
             section.putIfAbsent("type", "reading");
             result = Map.of("sections", List.of(section));
         }
-        // Post-process each section
+        // Post-process each section（postProcess 在 markSuccess 之后，避免后处理异常误记 markFailure）
         Object sectionsObj = result.get("sections");
         if (sectionsObj instanceof List) {
             for (Object secObj : (List<?>) sectionsObj) {
@@ -621,7 +612,7 @@ public class AiParseService {
 
     @SuppressWarnings("unchecked")
     public Map<String, Object> generateWritingGuidance(String fullWritingText) throws Exception {
-        if (!isConfigured()) {
+        if (!hasLegacyDeepSeekKey()) {
             throw new IllegalStateException("DeepSeek API key未配置");
         }
         if (fullWritingText == null || fullWritingText.trim().length() < 40) {
@@ -776,77 +767,143 @@ public class AiParseService {
      * Workflow Step 1 (legacy combined): Extract passages and question group skeleton (no answers).
      */
     @SuppressWarnings("unchecked")
-    public Map<String, Object> workflowStep1(String rawText) throws Exception {
-        if (!isConfigured()) throw new IllegalStateException("DeepSeek API key未配置");
+    public Map<String, Object> workflowStep1(Long userId, String rawText) throws Exception {
         String testText = findTestContent(rawText);
-        String input = testText.length() > textMaxChars
-                ? testText.substring(0, textMaxChars) + "\n...[截断]"
+        String input = testText.length() > TEXT_MAX_CHARS
+                ? testText.substring(0, TEXT_MAX_CHARS) + "\n...[截断]"
                 : testText;
-        log.info("Workflow Step1: sending {} chars to DeepSeek", input.length());
-        String content = callDeepSeek(WORKFLOW_STEP1_PROMPT,
-                "请分析以下IELTS试题文本，提取文章和题组结构：\n\n" + input,
-                4096, 90);
-        log.info("Workflow Step1: response length={}", content.length());
-        return objectMapper.readValue(content, Map.class);
+        log.info("Workflow Step1: sending {} chars to AI (EXAM_PARSE)", input.length());
+
+        AiCredentials credentials = aiSettingsService.resolve(userId, AiTaskType.TEXT);
+        aiUsageGuard.checkBeforeCall(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode());
+        try {
+            AiChatResponse response = openAiCompatibleClient.chat(AiChatRequest.builder()
+                    .credentials(credentials)
+                    .messages(List.of(
+                            AiChatMessage.system(WORKFLOW_STEP1_PROMPT),
+                            AiChatMessage.user("请分析以下IELTS试题文本，提取文章和题组结构：\n\n" + input)))
+                    .maxTokens(4096)
+                    .temperature(0.1)
+                    .jsonMode(true)
+                    .timeoutSeconds(90)
+                    .build());
+            Map<String, Object> parsed = objectMapper.readValue(response.getContent(), Map.class);
+            aiUsageGuard.markSuccess(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode());
+            log.info("Workflow Step1: response length={}", response.getContent().length());
+            return parsed;
+        } catch (Exception ex) {
+            aiUsageGuard.markFailure(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode(), ex);
+            throw aiCallFailed(ex);
+        }
     }
 
     /**
      * Workflow Step 1A: Extract passages only (focused, short prompt).
      */
     @SuppressWarnings("unchecked")
-    public Map<String, Object> workflowStep1A(String rawText) throws Exception {
-        if (!isConfigured()) throw new IllegalStateException("DeepSeek API key未配置");
+    public Map<String, Object> workflowStep1A(Long userId, String rawText) throws Exception {
         String testText = findTestContent(rawText);
-        String input = testText.length() > textMaxChars
-                ? testText.substring(0, textMaxChars) + "\n...[截断]"
+        String input = testText.length() > TEXT_MAX_CHARS
+                ? testText.substring(0, TEXT_MAX_CHARS) + "\n...[截断]"
                 : testText;
-        log.info("Workflow Step1A (passages): sending {} chars to DeepSeek", input.length());
-        String content = callDeepSeek(WORKFLOW_STEP1A_PROMPT,
-                "请从以下IELTS试题文本中提取阅读文章正文：\n\n" + input,
-                4096, 90);
-        log.info("Workflow Step1A: response length={}", content.length());
-        return objectMapper.readValue(content, Map.class);
+        log.info("Workflow Step1A (passages): sending {} chars to AI (EXAM_PARSE)", input.length());
+
+        AiCredentials credentials = aiSettingsService.resolve(userId, AiTaskType.TEXT);
+        aiUsageGuard.checkBeforeCall(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode());
+        try {
+            AiChatResponse response = openAiCompatibleClient.chat(AiChatRequest.builder()
+                    .credentials(credentials)
+                    .messages(List.of(
+                            AiChatMessage.system(WORKFLOW_STEP1A_PROMPT),
+                            AiChatMessage.user("请从以下IELTS试题文本中提取阅读文章正文：\n\n" + input)))
+                    .maxTokens(4096)
+                    .temperature(0.1)
+                    .jsonMode(true)
+                    .timeoutSeconds(90)
+                    .build());
+            Map<String, Object> parsed = objectMapper.readValue(response.getContent(), Map.class);
+            aiUsageGuard.markSuccess(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode());
+            log.info("Workflow Step1A: response length={}", response.getContent().length());
+            return parsed;
+        } catch (Exception ex) {
+            aiUsageGuard.markFailure(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode(), ex);
+            throw aiCallFailed(ex);
+        }
     }
 
     /**
      * Workflow Step 1B: Identify question groups structure only (focused, short prompt).
      */
     @SuppressWarnings("unchecked")
-    public Map<String, Object> workflowStep1B(String rawText) throws Exception {
-        if (!isConfigured()) throw new IllegalStateException("DeepSeek API key未配置");
+    public Map<String, Object> workflowStep1B(Long userId, String rawText) throws Exception {
         String testText = findTestContent(rawText);
-        String input = testText.length() > textMaxChars
-                ? testText.substring(0, textMaxChars) + "\n...[截断]"
+        String input = testText.length() > TEXT_MAX_CHARS
+                ? testText.substring(0, TEXT_MAX_CHARS) + "\n...[截断]"
                 : testText;
-        log.info("Workflow Step1B (questions): sending {} chars to DeepSeek", input.length());
-        String content = callDeepSeek(WORKFLOW_STEP1B_PROMPT,
-                "请从以下IELTS试题文本中识别所有题组结构：\n\n" + input,
-                4096, 90);
-        log.info("Workflow Step1B: response length={}", content.length());
-        return objectMapper.readValue(content, Map.class);
+        log.info("Workflow Step1B (questions): sending {} chars to AI (EXAM_PARSE)", input.length());
+
+        AiCredentials credentials = aiSettingsService.resolve(userId, AiTaskType.TEXT);
+        aiUsageGuard.checkBeforeCall(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode());
+        try {
+            AiChatResponse response = openAiCompatibleClient.chat(AiChatRequest.builder()
+                    .credentials(credentials)
+                    .messages(List.of(
+                            AiChatMessage.system(WORKFLOW_STEP1B_PROMPT),
+                            AiChatMessage.user("请从以下IELTS试题文本中识别所有题组结构：\n\n" + input)))
+                    .maxTokens(4096)
+                    .temperature(0.1)
+                    .jsonMode(true)
+                    .timeoutSeconds(90)
+                    .build());
+            Map<String, Object> parsed = objectMapper.readValue(response.getContent(), Map.class);
+            aiUsageGuard.markSuccess(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode());
+            log.info("Workflow Step1B: response length={}", response.getContent().length());
+            return parsed;
+        } catch (Exception ex) {
+            aiUsageGuard.markFailure(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode(), ex);
+            throw aiCallFailed(ex);
+        }
     }
 
     /**
      * Workflow Step 2: Given passage and one question group, generate answers and explanations.
      */
     @SuppressWarnings("unchecked")
-    public Map<String, Object> workflowStep2(String passageText, Map<String, Object> questionGroup) throws Exception {
-        if (!isConfigured()) throw new IllegalStateException("DeepSeek API key未配置");
+    public Map<String, Object> workflowStep2(Long userId, String passageText, Map<String, Object> questionGroup) throws Exception {
         // Build a concise user message with passage + group info
         String groupJson = objectMapper.writeValueAsString(questionGroup);
         String userMsg = "【文章】\n" + passageText + "\n\n【题组信息】\n" + groupJson;
 
         // Limit passage to avoid token overflow
-        if (userMsg.length() > textMaxChars) {
-            String trimmedPassage = passageText.substring(0, Math.max(1000, textMaxChars - groupJson.length() - 200));
+        if (userMsg.length() > TEXT_MAX_CHARS) {
+            String trimmedPassage = passageText.substring(0, Math.max(1000, TEXT_MAX_CHARS - groupJson.length() - 200));
             userMsg = "【文章】\n" + trimmedPassage + "\n...[截断]\n\n【题组信息】\n" + groupJson;
         }
 
         String range = String.valueOf(questionGroup.getOrDefault("range", "?"));
-        log.info("Workflow Step2: group {} – sending {} chars", range, userMsg.length());
-        String content = callDeepSeek(WORKFLOW_STEP2_PROMPT, userMsg, 4096, 90);
-        log.info("Workflow Step2: group {} – response length={}", range, content.length());
-        return objectMapper.readValue(content, Map.class);
+        log.info("Workflow Step2: group {} – sending {} chars to AI (EXAM_PARSE)", range, userMsg.length());
+
+        AiCredentials credentials = aiSettingsService.resolve(userId, AiTaskType.TEXT);
+        aiUsageGuard.checkBeforeCall(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode());
+        try {
+            AiChatResponse response = openAiCompatibleClient.chat(AiChatRequest.builder()
+                    .credentials(credentials)
+                    .messages(List.of(
+                            AiChatMessage.system(WORKFLOW_STEP2_PROMPT),
+                            AiChatMessage.user(userMsg)))
+                    .maxTokens(4096)
+                    .temperature(0.1)
+                    .jsonMode(true)
+                    .timeoutSeconds(90)
+                    .build());
+            Map<String, Object> parsed = objectMapper.readValue(response.getContent(), Map.class);
+            aiUsageGuard.markSuccess(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode());
+            log.info("Workflow Step2: group {} – response length={}", range, response.getContent().length());
+            return parsed;
+        } catch (Exception ex) {
+            aiUsageGuard.markFailure(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode(), ex);
+            throw aiCallFailed(ex);
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -1437,7 +1494,7 @@ public class AiParseService {
      */
     @SuppressWarnings("unchecked")
     private Map<String, String> extractHeadingsWithAi(String rawText) {
-        if (!isConfigured() || rawText == null) return Map.of();
+        if (!hasLegacyDeepSeekKey() || rawText == null) return Map.of();
         try {
             String input = rawText.length() > textMaxChars
                     ? rawText.substring(0, textMaxChars) : rawText;

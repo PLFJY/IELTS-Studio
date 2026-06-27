@@ -14,6 +14,8 @@
 > - ✅ Phase 5A-polish: adjusted usage accounting so success is recorded only after provider response is successfully parsed/validated (避免返回非法 JSON / 空内容时同时记成功与失败、失败仍被扣费)。
 > - ✅ Phase 5A-local-provider-test: Phase 5A also includes local OpenAI-compatible provider tests using JDK HttpServer, covering request serialization, token field handling, sanitized errors, and text-service integration without calling real providers.
 > - ✅ Phase 5B：继续迁移剩余 TEXT Provider 功能。已迁移 `ClozeService.generate` / `ClozeService.check` / `AiParseService.generateWordEntries` 三个方法走新架构（`AiSettingsService.resolve(userId, TEXT)` → `AiUsageGuard.checkBeforeCall` → `OpenAiCompatibleClient.chat` → JSON 解析成功后 `markSuccess`，失败 `markFailure`）；新增 `AiFeature.WORD_GENERATE`（TEXT, cost=2）；`ClozeService` 与 `WordBookController` 接口改为从 `AuthUser` 注入 `userId`，禁止前端传 `userId`；`AsyncWordService` 两个调用点已下传 `userId`；provider 错误统一脱敏返回通用提示。
+> - ✅ Phase 5C-1：普通文本试卷解析（`parsePrecise=false` 链路）接入新 Provider 架构。已迁移 `AiParseService.parseWithAi(Long userId, String)` / `detectAndParseMultiSection(Long userId, String)` / `workflowStep1` / `workflowStep1A` / `workflowStep1B` / `workflowStep2` 六个方法走 `AiFeature.EXAM_PARSE`（TEXT, cost=5）+ 新架构；`ExamService.uploadExam` / `uploadExamImages` 从 `AuthUser` 注入 `userId` 并下传给 `AsyncParseService.parseAndSave` / `parseAndSaveImages`，再透传到 `parseSingle` / `workflowParse` / `handleMultiSection` / `commitSection`（含 0-question 时的 `parseWithAi` retry）；`AiParseService.isConfigured()` 改为始终返回 `true`，避免 USER 模式被误判为未配置；未迁移的 `generateWritingGuidance` / `extractHeadingsWithAi` 改用 `hasLegacyDeepSeekKey()` 判断旧 DeepSeek client 是否可用；移除无调用方的 5-arg `parseAndSave` legacy 重载；provider 错误统一脱敏。新增 `AiParseServiceExamParseProviderTest`（6 用例）与 `AsyncParseServiceUserIdPropagationTest`（1 用例）。
+>   - 仍未迁移：Qwen / MiMO Vision 精准解析、`parsePrecise=true` 主链路、`QwenDocumentParseService`、Vision Provider local tests、Writing guidance workflow（仍走旧 DeepSeek HttpClient）。
 
 ---
 
@@ -154,6 +156,7 @@ SomeService 组装业务结果 → Result.success(...)
 | Phase 4 | ✅ 已完成 | 前端用户中心 AI 设置 UI：在 `ProfileView.vue` 增加 AI 设置区（`AiSettingsCard.vue`），masked key 展示（`frontend/src/views/ProfileView.vue`、`frontend/src/components/profile/`、`frontend/src/api/aiSettings.js`） |
 | Phase 5A | ✅ 已完成 | 现有**文本类** AI 功能接入新架构：迁移 `AiParseService.gradeWriting` / `translateWithContext` / `chatWithContext` 走 `AiSettingsService` + `AiUsageGuard` + `OpenAiCompatibleClient`；`/exams/grade-writing` 改为需要登录 |
 | Phase 5B | ✅ 已完成 | 继续迁移 TEXT Provider 功能：`ClozeService.generate` / `ClozeService.check` / `AiParseService.generateWordEntries` 走新架构；新增 `AiFeature.WORD_GENERATE`；`/words/cloze/*` 接口从 `AuthUser` 注入 `userId`；`AsyncWordService` 调用点下传 `userId` |
-| Phase 5C | 后续 | 其余 AI 功能接入新架构：普通试卷解析、PDF/图片精准解析、Qwen/MiMO 多模态、`AsyncParseService`、Writing guidance workflow 等 |
+| Phase 5C-1 | ✅ 已完成 | 普通文本试卷解析（`parsePrecise=false`）接入新架构：`AiParseService.parseWithAi` / `detectAndParseMultiSection` / `workflowStep1` / `workflowStep1A` / `workflowStep1B` / `workflowStep2` 走 `AiFeature.EXAM_PARSE`；`ExamService` → `AsyncParseService` 一路下传 `userId`（`parseAndSave` / `parseAndSaveImages` / `parseSingle` / `workflowParse` / `handleMultiSection` / `commitSection`）；`isConfigured()` 改为 `return true`；移除 5-arg legacy `parseAndSave` |
+| Phase 5C-2 | 后续 | 其余 AI 功能接入新架构：PDF/图片精准解析（`parsePrecise=true` 主链路）、Qwen/MiMO 多模态、`QwenDocumentParseService`、Vision Provider local tests、Writing guidance workflow（`generateWritingGuidance` / `extractHeadingsWithAi` 仍走旧 DeepSeek HttpClient） |
 
 > 各阶段应独立 PR，小步推进，每阶段都要跑通验证命令（`mvn test` / `npm run build`）。
