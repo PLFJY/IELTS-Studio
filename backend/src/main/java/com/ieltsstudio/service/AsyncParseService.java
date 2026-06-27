@@ -58,15 +58,19 @@ public class AsyncParseService {
     public void parseAndSave(Long userId, Long examId, byte[] fileBytes, String originalFilename,
                              boolean parsePrecise, String extractedText, String examType) {
         try {
-            if (parsePrecise && qwenAiParseService.isConfigured()) {
-                // ── Precise path: Qwen vision → structured JSON directly ───────────────
+            if (parsePrecise) {
+                // ── Precise path: Vision provider → structured JSON directly ───────────
+                if (!qwenAiParseService.isConfigured(userId)) {
+                    throw new RuntimeException("精准解析未配置，请前往个人中心配置 Vision Provider，或切换站点内置配置");
+                }
                 log.info("Exam {} – using {} AI precise parse (vision → JSON) for type: {}", examId, qwenAiParseService.getProviderName(), examType);
                 Map<String, Object> parsed;
                 try {
-                    parsed = qwenAiParseService.parseDocument(fileBytes, originalFilename, examType);
+                    parsed = qwenAiParseService.parseDocument(userId, fileBytes, originalFilename, examType);
                 } catch (Exception qwenEx) {
+                    // 仅记异常类名，避免把 provider body（即使已被脱敏，保险起见）写入日志
                     log.warn("Exam {} – {} AI precise parse failed ({}), falling back to text extraction + DeepSeek",
-                            examId, qwenAiParseService.getProviderName(), qwenEx.getMessage());
+                            examId, qwenAiParseService.getProviderName(), qwenEx.getClass().getSimpleName());
                     String fallbackText = fileParseService.extractTextFromBytes(fileBytes, originalFilename);
                     handleMultiSection(userId, examId, fallbackText);
                     return;
@@ -83,13 +87,13 @@ public class AsyncParseService {
                     text = fileParseService.extractTextFromBytes(fileBytes, originalFilename);
                 }
 
-                // If text extraction failed and Qwen AI is available, auto-switch to precise parse
+                // If text extraction failed and Vision AI is available, auto-switch to precise parse
                 if (text == null || text.trim().length() < 80) {
-                    if (qwenAiParseService.isConfigured()) {
+                    if (qwenAiParseService.isConfigured(userId)) {
                         log.warn("Exam {} – extraction too short ({} chars), auto-retrying with {} AI precise parse for type: {}",
                                 examId, text == null ? 0 : text.trim().length(), qwenAiParseService.getProviderName(), examType);
                         try {
-                            Map<String, Object> qwenResult = qwenAiParseService.parseDocument(fileBytes, originalFilename, examType);
+                            Map<String, Object> qwenResult = qwenAiParseService.parseDocument(userId, fileBytes, originalFilename, examType);
                             handleQwenParsedResult(userId, examId, qwenResult);
                             return;
                         } catch (Exception qwenEx) {
@@ -370,10 +374,10 @@ public class AsyncParseService {
                                    boolean parsePrecise, String extractedText, String examType) {
         try {
             if (parsePrecise) {
-                if (!qwenAiParseService.isConfigured()) {
-                    throw new RuntimeException("精准解析未配置（Qwen API Key 缺失），无法解析图片");
+                if (!qwenAiParseService.isConfigured(userId)) {
+                    throw new RuntimeException("精准解析未配置，请前往个人中心配置 Vision Provider，或切换站点内置配置");
                 }
-                Map<String, Object> parsed = qwenAiParseService.parseImages(imageBytes, filenames, examType);
+                Map<String, Object> parsed = qwenAiParseService.parseImages(userId, imageBytes, filenames, examType);
                 handleQwenParsedResult(userId, examId, parsed);
                 return;
             }
