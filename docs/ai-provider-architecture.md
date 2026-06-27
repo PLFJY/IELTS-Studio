@@ -158,6 +158,8 @@ SomeService 组装业务结果 → Result.success(...)
 | Phase 5A | ✅ 已完成 | 现有**文本类** AI 功能接入新架构：迁移 `AiParseService.gradeWriting` / `translateWithContext` / `chatWithContext` 走 `AiSettingsService` + `AiUsageGuard` + `OpenAiCompatibleClient`；`/exams/grade-writing` 改为需要登录 |
 | Phase 5B | ✅ 已完成 | 继续迁移 TEXT Provider 功能：`ClozeService.generate` / `ClozeService.check` / `AiParseService.generateWordEntries` 走新架构；新增 `AiFeature.WORD_GENERATE`；`/words/cloze/*` 接口从 `AuthUser` 注入 `userId`；`AsyncWordService` 调用点下传 `userId` |
 | Phase 5C-1 | ✅ 已完成 | 普通文本试卷解析（`parsePrecise=false`）接入新架构：`AiParseService.parseWithAi` / `detectAndParseMultiSection` / `workflowStep1` / `workflowStep1A` / `workflowStep1B` / `workflowStep2` 走 `AiFeature.EXAM_PARSE`；`ExamService` → `AsyncParseService` 一路下传 `userId`（`parseAndSave` / `parseAndSaveImages` / `parseSingle` / `workflowParse` / `handleMultiSection` / `commitSection`）；`isConfigured()` 改为 `return true`；移除 5-arg legacy `parseAndSave` |
-| Phase 5C-2 | 后续 | 其余 AI 功能接入新架构：PDF/图片精准解析（`parsePrecise=true` 主链路）、Qwen/MiMO 多模态、`QwenDocumentParseService`、Vision Provider local tests、Writing guidance workflow（`generateWritingGuidance` / `extractHeadingsWithAi` 仍走旧 DeepSeek HttpClient） |
+| Phase 5C-2 | ✅ 已完成 | PDF/图片精准解析（`parsePrecise=true`）接入新架构：`QwenAiParseService.parseDocument(userId, ...)` / `parseImages(userId, ...)` 走 `AiSettingsService.resolve(userId, VISION)` + `AiUsageGuard` + `OpenAiCompatibleClient`；使用 `AiFeature.EXAM_PRECISE_PARSE`；支持 Qwen/MiMO/custom OpenAI-compatible Vision Provider；`AsyncParseService` precise path 已下传 userId；已补 Vision local provider tests |
+| Phase 5C-3 | ⏭ 下一步 | Legacy AI 调用清理：`generateWritingGuidance`、`extractHeadingsWithAi`、`QwenDocumentParseService`、旧 `callDeepSeek` / direct HttpClient 残留检查 |
+| Phase 6 | 后续 | `AiUsageGuard` 真正实现 credits / rate limit / usage records，落地 `ai_usage_quota` / `ai_usage_records` |
 
 > 各阶段应独立 PR，小步推进，每阶段都要跑通验证命令（`mvn test` / `npm run build`）。

@@ -32,6 +32,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+// TODO(Phase 5C-3): migrate this legacy direct Qwen provider call to AiSettingsService + OpenAiCompatibleClient.
+// 当前为死代码（无任何调用方），精准解析主链路已统一走 QwenAiParseService.parseDocument(userId, ...)。
 @Slf4j
 @Service
 @RequiredArgsConstructor
