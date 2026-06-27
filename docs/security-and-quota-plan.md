@@ -39,6 +39,7 @@ IELTS Studio 的 AI 接口会真实调用第三方 provider（DeepSeek / Qwen / 
 | Translate（翻译） | `/exams/translate` | 1 |
 | Cloze generate（完形填空生成） | `/words/cloze/generate` | 2 |
 | Cloze check（完形填空批改） | `/words/cloze/check` | 1 |
+| Word generate（词汇生成） | quick add / 词汇文件导入触发的 AI 词条解析 | 2 |
 | Exam parse（普通试卷解析） | `/exams/upload`（普通模式） | 5 |
 | Precise vision parse（精准视觉解析） | `/exams/upload`（精准模式） | 10 |
 
@@ -74,9 +75,13 @@ IELTS Studio 的 AI 接口会真实调用第三方 provider（DeepSeek / Qwen / 
 | `/api/exams/upload` | 试卷上传（普通 + 精准解析都会触发 AI） |
 | `/api/words/cloze/generate` | 完形填空生成 |
 | `/api/words/cloze/check` | 完形填空批改 |
+| `/api/words/books/default/quick-add` | 默认词书快速添加单词，会异步触发 AI 词条生成 |
+| `/api/words/books/{id}/quick-add` | 指定词书快速添加单词，会异步触发 AI 词条生成 |
+| `/api/words/books/{id}/upload` | 词汇文件导入，解析后会异步触发 AI 词条生成 |
 | 其他会触发 AI provider 调用的接口 | 新增 AI 接口时同步加入本表 |
 
 > 精准解析（`parsePrecise=true`）走 Vision Provider，cost 更高（10）。
+> 词汇文件导入会在 `AsyncWordService.processWordFile(...)` 中触发 `AiParseService.generateWordEntries(...)`，因此也应按 `WORD_GENERATE` 计入保护范围。
 > 后续新增任何触发 AI 调用的接口，都必须：加鉴权 + 确定是否扣费 + 确定是否限流 + 加入本表。
 
 ---

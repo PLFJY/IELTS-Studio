@@ -9,7 +9,7 @@
 > - ✅ Phase 3A：`user_ai_settings` / `ai_usage_quota` / `ai_usage_records` 三表 + Entity/Mapper + `AiApiKeyCrypto` 已落地。
 > - ✅ Phase 3B：用户 AI 设置后端接口已落地（`UserAiSettingsService` + `UserAiSettingsController` + DTO），`AiSettingsService` 已支持 USER 模式凭据解析；现有 AI 业务调用链尚未迁移（留待 Phase 5）。
 > - ✅ Phase 3B-polish：安全与一致性补强。DTO 不再使用 `@Data`，`apiKey` 字段通过 `@ToString.Exclude` 排除；`AiSettingsService.resolveUser` 在解密前校验 provider 是否支持当前 `taskType`；`UserAiSettingsService` 公共方法加 `requireUserId` 防御。
-> - ⏭️ Phase 4（下一步）：前端用户中心设置 UI（`ProfileView.vue` 增加 AI 设置区，masked key 展示）。
+> - ✅ Phase 4：前端用户中心设置 UI 已落地（`ProfileView.vue` 增加 `AiSettingsCard` AI 设置区，masked key 展示）。
 > - ✅ Phase 5A：现有**文本类** AI 功能接入新架构。已迁移 `AiParseService` 中的 `gradeWriting` / `translateWithContext` / `chatWithContext` 三个方法，统一走 `AiSettingsService.resolve` → `AiUsageGuard.checkBeforeCall` → `OpenAiCompatibleClient.chat` → `markSuccess`/`markFailure`；`/exams/grade-writing` 已改为需要登录。
 > - ✅ Phase 5A-polish: adjusted usage accounting so success is recorded only after provider response is successfully parsed/validated (避免返回非法 JSON / 空内容时同时记成功与失败、失败仍被扣费)。
 > - ✅ Phase 5A-local-provider-test: Phase 5A also includes local OpenAI-compatible provider tests using JDK HttpServer, covering request serialization, token field handling, sanitized errors, and text-service integration without calling real providers.
@@ -151,7 +151,7 @@ SomeService 组装业务结果 → Result.success(...)
 | Phase 3A | ✅ 已完成 | 数据库表、Entity/Mapper、API Key 加密工具（`init.sql`、`entity/`、`mapper/`、`AiApiKeyCrypto`） |
 | Phase 3B | ✅ 已完成 | 用户 AI 设置后端接口与 USER 模式 credentials 解析（`UserAiSettingsService` / `UserAiSettingsController` / DTO，`AiSettingsService` 已支持 USER 模式） |
 | Phase 3B-polish | ✅ 已完成 | 安全补强：DTO `toString()` 防泄露、`resolveUser` 解密前校验 provider-taskType、`requireUserId` 防御 |
-| Phase 4 | ⏭ 下一步 | 前端用户中心 AI 设置 UI：在 `ProfileView.vue` 增加 AI 设置区，masked key 展示（`frontend/src/views/ProfileView.vue`、`frontend/src/api/`） |
+| Phase 4 | ✅ 已完成 | 前端用户中心 AI 设置 UI：在 `ProfileView.vue` 增加 AI 设置区（`AiSettingsCard.vue`），masked key 展示（`frontend/src/views/ProfileView.vue`、`frontend/src/components/profile/`、`frontend/src/api/aiSettings.js`） |
 | Phase 5A | ✅ 已完成 | 现有**文本类** AI 功能接入新架构：迁移 `AiParseService.gradeWriting` / `translateWithContext` / `chatWithContext` 走 `AiSettingsService` + `AiUsageGuard` + `OpenAiCompatibleClient`；`/exams/grade-writing` 改为需要登录 |
 | Phase 5B | ✅ 已完成 | 继续迁移 TEXT Provider 功能：`ClozeService.generate` / `ClozeService.check` / `AiParseService.generateWordEntries` 走新架构；新增 `AiFeature.WORD_GENERATE`；`/words/cloze/*` 接口从 `AuthUser` 注入 `userId`；`AsyncWordService` 调用点下传 `userId` |
 | Phase 5C | 后续 | 其余 AI 功能接入新架构：普通试卷解析、PDF/图片精准解析、Qwen/MiMO 多模态、`AsyncParseService`、Writing guidance workflow 等 |
