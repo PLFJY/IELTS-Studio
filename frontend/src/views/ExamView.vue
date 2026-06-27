@@ -517,16 +517,11 @@ const isWriteSection = computed(() => {
   console.log('[isWriteSection] questions:', questions, 'result:', result)
   return result
 })
-// Filter questions: if passage has no explicit WRITING TASK 2 marker, drop spurious Task2 items
+// Task1/Task2 的判断完全交给 AI 解析给出的 taskType 字段，前端不再依赖 passage 里的
+// "WRITING TASK 2" 文本标记做二次过滤。若 AI 误识别 Task2，应在后端解析阶段
+// （prompt / postProcess）修正，而不是在前端启发式过滤。
 const displayQuestions = computed(() => {
-  const qs = currentSection.value?.questions || []
-  if (!qs.length) return []
-  // only apply to write sections
-  const passage = String(currentSection.value?.passage || '').toUpperCase()
-  const hasTask2Marker = /WRITING\s+TASK\s*2/.test(passage)
-  if (hasTask2Marker) return qs
-  // keep Task1; remove Task2 write questions that look synthetic
-  return qs.filter(q => !(q?.type === 'write' && String(q?.taskType).toLowerCase() === 'task2'))
+  return currentSection.value?.questions || []
 })
 // Left-side instruction: prefer Task1 question text; fallback to section passage; strip visual blocks
 const leftWriteInstruction = computed(() => {

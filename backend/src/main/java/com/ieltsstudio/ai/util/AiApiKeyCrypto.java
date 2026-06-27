@@ -1,6 +1,7 @@
 package com.ieltsstudio.ai.util;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -71,6 +72,7 @@ public class AiApiKeyCrypto {
      *
      * @param secret 配置中的加密密钥（可为空）
      */
+    @Autowired
     public AiApiKeyCrypto(@Value("${app.ai.key-encryption-secret:}") String secret) {
         this(secret, true);
     }

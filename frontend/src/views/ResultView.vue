@@ -498,6 +498,7 @@
 import { ref, reactive, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useExamStore } from '@/stores/exam'
+import { useThemeStore } from '@/stores/theme'
 import NavBar from '@/components/NavBar.vue'
 import * as echarts from 'echarts'
 import { translateApi } from '@/api/translate'
@@ -507,6 +508,12 @@ import { ElMessage } from 'element-plus'
 const route = useRoute()
 const router = useRouter()
 const examStore = useExamStore()
+const themeStore = useThemeStore()
+
+// 从 :root / html.dark 读取 CSS 变量，保证 ECharts 配色跟随主题
+function cssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+}
 
 const result = computed(() => examStore.examResult)
 const isWritingExam = computed(() => result.value?.questions?.every(q => q.isWrite))
@@ -1023,18 +1030,26 @@ function renderWriteCharts() {
   const shouldRenderPie = chartType.includes('pie')
   if (!shouldRenderBar && !shouldRenderPie) return
 
+  // 跟随主题的动态配色（CSS 变量）
+  const textSecondary = cssVar('--text-secondary') || '#475569'
+  const textMuted = cssVar('--text-muted') || '#64748B'
+  const textPrimary = cssVar('--text-primary') || '#334155'
+  const borderLight = cssVar('--border-light') || '#E2E8F0'
+  const bgCard = cssVar('--bg-card') || '#fff'
+  const colorAccent = cssVar('--color-accent') || '#4AA36F'
+
   if (shouldRenderBar && writeBarChartRef.value) {
     if (!writeBarChart) writeBarChart = echarts.init(writeBarChartRef.value)
     const grouped = buildGroupedFromChart(seg)
     writeBarChart.setOption({
-      animationDuration: 450, color: ['#4AA36F'],
+      animationDuration: 450, color: [colorAccent],
       grid: { left: 12, right: 12, top: 28, bottom: 36, containLabel: true },
       tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-      legend: grouped ? { top: 0, textStyle: { color: '#475569', fontSize: 11 } } : undefined,
+      legend: grouped ? { top: 0, textStyle: { color: textSecondary, fontSize: 11 } } : undefined,
       xAxis: grouped
-        ? { type: 'category', data: grouped.x, axisLabel: { color: '#475569', fontSize: 11, interval: 0, rotate: grouped.x.length > 4 ? 25 : 0 }, axisTick: { alignWithLabel: true } }
-        : { type: 'category', data: data.map(d => d.label), axisLabel: { color: '#475569', fontSize: 11, interval: 0, rotate: data.length > 4 ? 25 : 0 }, axisTick: { alignWithLabel: true } },
-      yAxis: { type: 'value', name: (seg?.meta?.yAxis || '').toUpperCase(), nameTextStyle: { color: '#64748B' }, axisLabel: { color: '#64748B', fontSize: 11 }, splitLine: { lineStyle: { color: '#E2E8F0' } } },
+        ? { type: 'category', data: grouped.x, axisLabel: { color: textSecondary, fontSize: 11, interval: 0, rotate: grouped.x.length > 4 ? 25 : 0 }, axisTick: { alignWithLabel: true } }
+        : { type: 'category', data: data.map(d => d.label), axisLabel: { color: textSecondary, fontSize: 11, interval: 0, rotate: data.length > 4 ? 25 : 0 }, axisTick: { alignWithLabel: true } },
+      yAxis: { type: 'value', name: (seg?.meta?.yAxis || '').toUpperCase(), nameTextStyle: { color: textMuted }, axisLabel: { color: textMuted, fontSize: 11 }, splitLine: { lineStyle: { color: borderLight } } },
       series: grouped
         ? grouped.series.map(s => ({ ...s, barMaxWidth: 28, itemStyle: { borderRadius: [6, 6, 0, 0] } }))
         : [{ type: 'bar', data: data.map(d => Number(d.value) || 0), barMaxWidth: 28, itemStyle: { borderRadius: [6, 6, 0, 0] } }],
@@ -1047,11 +1062,11 @@ function renderWriteCharts() {
       animationDuration: 450,
       color: ['#2E8B57', '#3CAEA3', '#F6C85F', '#F08A5D', '#6A89CC', '#B8DE6F', '#7DCEA0', '#5DADE2'],
       tooltip: { trigger: 'item' },
-      legend: { bottom: 0, left: 'center', textStyle: { color: '#475569', fontSize: 11 } },
+      legend: { bottom: 0, left: 'center', textStyle: { color: textSecondary, fontSize: 11 } },
       series: [{
         type: 'pie', radius: ['45%', '70%'], center: ['50%', '42%'],
-        itemStyle: { borderRadius: 6, borderColor: '#fff', borderWidth: 1 },
-        label: { formatter: ({ name, percent }) => `${name}\n${Math.round(percent)}%`, color: '#334155', fontSize: 10 },
+        itemStyle: { borderRadius: 6, borderColor: bgCard, borderWidth: 1 },
+        label: { formatter: ({ name, percent }) => `${name}\n${Math.round(percent)}%`, color: textPrimary, fontSize: 10 },
         data: data.map(d => ({ name: d.label, value: Math.max(Math.abs(Number(d.value) || 0), 0.0001) })),
       }],
     }, true)
@@ -1064,6 +1079,7 @@ watch(
     activeVisualIdx.value,
     (activeVisualChart.value?.chartType || '').toLowerCase(),
     activeVisualChart.value?.chartData?.map(i => `${i.label}:${i.value}`).join('|'),
+    themeStore.isDark,
   ],
   async () => {
     if (!showPassage.value) return
@@ -1586,7 +1602,7 @@ onMounted(() => {
   font-family: Georgia, 'Times New Roman', serif;
   font-size: 18px;
   font-weight: 800;
-  color: #111827;
+  color: var(--text-primary);
   line-height: 1.9;
   text-align: center;
 }
@@ -1662,7 +1678,7 @@ onMounted(() => {
 }
 .rvp-summary-item {
   font-size: 13px;
-  color: #334155;
+  color: var(--text-primary);
   padding-left: 12px;
   position: relative;
 }
@@ -1706,10 +1722,11 @@ onMounted(() => {
 }
 .rvp-table td {
   padding: 5px 10px;
-  border-bottom: 1px solid #E2E8F0;
+  border-bottom: 1px solid var(--border-light);
+  color: var(--text-primary);
 }
 .rvp-table tr:nth-child(even) td {
-  background: #F8FAFC;
+  background: var(--bg-primary);
 }
 
 :deep(.hl-red) {
@@ -2060,10 +2077,10 @@ onMounted(() => {
   z-index: 20;
   min-width: 220px;
   max-width: 360px;
-  background: rgba(255, 255, 255, 0.98);
-  border: 1px solid rgba(148, 163, 184, 0.45);
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
   border-radius: 12px;
-  box-shadow: 0 14px 40px rgba(15, 23, 42, 0.12);
+  box-shadow: var(--shadow-lg);
   padding: 10px 12px;
 }
 .tb-actions {
@@ -2087,16 +2104,16 @@ onMounted(() => {
   width: 26px;
   height: 26px;
   border-radius: 8px;
-  border: 1px solid rgba(148, 163, 184, 0.45);
-  background: #fff;
+  border: 1px solid var(--border-color);
+  background: var(--bg-white);
   cursor: pointer;
-  color: #475569;
+  color: var(--text-secondary);
   font-size: 16px;
   line-height: 1;
 }
 .tb-result { margin-top: 10px; }
-.tb-translation { font-size: 13px; color: #0F172A; line-height: 1.55; font-weight: 600; }
-.tb-notes { margin-top: 6px; font-size: 12px; color: #64748B; line-height: 1.5; }
+.tb-translation { font-size: 13px; color: var(--text-primary); line-height: 1.55; font-weight: 600; }
+.tb-notes { margin-top: 6px; font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
 
 /* ── FAB Group ──────────────────────────────────────────── */
 .result-fabs {
@@ -2113,19 +2130,19 @@ onMounted(() => {
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  border: 1px solid #D1D5DB;
-  background: #fff;
-  color: #6B7280;
+  border: 1px solid var(--border-color);
+  background: var(--bg-white);
+  color: var(--text-muted);
   font-size: 14px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  box-shadow: var(--shadow-sm);
   transition: all 0.2s;
   align-self: flex-end;
 }
-.fab-minimize-btn:hover { background: #F3F4F6; border-color: #9CA3AF; }
+.fab-minimize-btn:hover { background: var(--bg-primary); border-color: var(--text-muted); }
 .fab-row {
   display: flex;
   align-items: center;
@@ -2195,27 +2212,27 @@ onMounted(() => {
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  border-bottom: 1px solid #E5E7EB;
-  background: #F8FAFC;
+  border-bottom: 1px solid var(--border-light);
+  background: var(--bg-primary);
   flex-shrink: 0;
 }
 .ai-context-label {
   font-size: 12px;
-  color: #64748B;
+  color: var(--text-muted);
   font-weight: 700;
 }
 .ai-context-selector select {
   flex: 1;
   min-width: 0;
-  border: 1px solid #CBD5E1;
+  border: 1px solid var(--border-color);
   border-radius: 8px;
   padding: 6px 8px;
   font-size: 12px;
-  color: #334155;
-  background: #fff;
+  color: var(--text-primary);
+  background: var(--bg-white);
   outline: none;
 }
-.ai-context-selector select:focus { border-color: #2D6A4F; }
+.ai-context-selector select:focus { border-color: var(--color-primary); }
 .ai-chat-messages {
   flex: 1; overflow-y: auto; padding: 12px;
   display: flex; flex-direction: column; gap: 10px;
@@ -2226,10 +2243,10 @@ onMounted(() => {
   border-radius: 0 0 12px 0;
 }
 .ai-chat-empty {
-  text-align: center; color: #9CA3AF; font-size: 13px; padding: 30px 10px;
+  text-align: center; color: var(--text-muted); font-size: 13px; padding: 30px 10px;
 }
 .ai-chat-empty p { margin: 4px 0; }
-.ai-chat-hint { font-size: 12px; color: #D1D5DB; }
+.ai-chat-hint { font-size: 12px; color: var(--text-muted); }
 .ai-msg { display: flex; }
 .ai-msg.user { justify-content: flex-end; }
 .ai-msg.assistant { justify-content: flex-start; }
@@ -2241,7 +2258,7 @@ onMounted(() => {
   background: #2D6A4F; color: #fff; border-bottom-right-radius: 3px;
 }
 .ai-msg.assistant .ai-msg-bubble {
-  background: #F3F4F6; color: #1F2937; border-bottom-left-radius: 3px;
+  background: var(--bg-primary); color: var(--text-primary); border-bottom-left-radius: 3px;
 }
 .ai-typing {
   display: flex; align-items: center; gap: 4px; padding: 10px 16px;
@@ -2257,13 +2274,14 @@ onMounted(() => {
   40% { transform: scale(1); opacity: 1; }
 }
 .ai-chat-input {
-  display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid #E5E7EB; background: #FAFAFA;
+  display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border-light); background: var(--bg-primary);
 }
 .ai-chat-input input {
-  flex: 1; border: 1px solid #D1D5DB; border-radius: 8px; padding: 8px 12px;
-  font-size: 13px; outline: none; transition: border-color 0.2s;
+  flex: 1; border: 1px solid var(--border-color); border-radius: 8px; padding: 8px 12px;
+  font-size: 13px; color: var(--text-primary); background: var(--bg-white); outline: none; transition: border-color 0.2s;
 }
-.ai-chat-input input:focus { border-color: #2D6A4F; }
+.ai-chat-input input::placeholder { color: var(--text-muted); }
+.ai-chat-input input:focus { border-color: var(--color-primary); }
 .ai-chat-input button {
   padding: 8px 16px; background: #2D6A4F; color: #fff; border: none; border-radius: 8px;
   font-size: 13px; cursor: pointer; transition: background 0.2s; white-space: nowrap;
