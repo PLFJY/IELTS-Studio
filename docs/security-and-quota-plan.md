@@ -117,7 +117,7 @@ IELTS Studio 的 AI 接口会真实调用第三方 provider（DeepSeek / Qwen / 
 ### 6.1 Phase 6A 已落地实现
 
 - **扣费模型**：BUILTIN 采用「调用前预扣 + 失败回滚」。`AiUsageGuard.checkBeforeCall` 通过原子 `UPDATE ... SET credits_used = credits_used + cost WHERE credits_total - credits_used >= cost` 预扣，避免高并发下超卖；`markFailure` 用 `GREATEST(credits_used - cost, 0)` 回滚。`markSuccess` 不再扣费，仅写 SUCCESS 流水。
-- **周期规则**：自然周（周一 00:00 ~ 下周一 00:00），默认每周 30 credits，quota 行按 `(user_id, period_start)` 唯一约束，并发插入冲突时回退查询。
+- **周期规则**：自然周（周一 00:00 ~ 下周一 00:00），默认每周 30 credits，quota 行按 `(user_id, period_start)` 唯一约束，并发插入冲突时回退查询。Quota creation defensively reloads the inserted row if the database/ORM does not populate the auto-increment ID back into the entity.
 - **USER 模式限流**：本阶段使用**单机内存**滑动窗口（`ConcurrentHashMap` + 按分钟计数），每用户每 feature 每分钟 20 次，多实例不共享。
 - **流水状态**：`SUCCESS` / `FAILED` / `REJECTED` 三种，`REJECTED` 用于额度不足（BUILTIN）或限流触发（USER），cost 均为 0。
 - **errorMessage 脱敏**：移除 `Authorization: Bearer xxx` / `Bearer xxx` / `sk-xxx`，截断到 500 字符（对齐 `error_message VARCHAR(500)`）。

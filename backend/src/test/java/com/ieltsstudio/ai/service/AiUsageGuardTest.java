@@ -19,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -48,7 +49,11 @@ class AiUsageGuardTest {
     @Test
     void builtinShouldCreateQuotaAndReserveCredits() {
         when(quotaMapper.selectOne(any())).thenReturn(null);
-        when(quotaMapper.insert(any(AiUsageQuota.class))).thenReturn(1);
+        // 模拟 MyBatis-Plus + IdType.AUTO：insert 后把自增 ID 回填到 entity
+        when(quotaMapper.insert(any(AiUsageQuota.class))).thenAnswer(inv -> {
+            inv.getArgument(0, AiUsageQuota.class).setId(1L);
+            return 1;
+        });
         when(quotaMapper.update(any(), any())).thenReturn(1); // 预扣成功
 
         guard.checkBeforeCall(USER_ID, AiFeature.WRITING_GRADE, AiKeyMode.BUILTIN);
@@ -64,6 +69,46 @@ class AiUsageGuardTest {
         verify(quotaMapper).update(any(), any());
 
         // 未写 REJECTED 流水
+        verify(recordMapper, never()).insert(any(AiUsageRecord.class));
+    }
+
+    // ─── 1b. BUILTIN：insert 后 id 未回填，reload 当前周期 quota 再预扣 ───────
+
+    @Test
+    void builtinShouldReloadQuotaWhenInsertedIdNotReturned() {
+        AiUsageQuota reloaded = new AiUsageQuota();
+        reloaded.setId(200L);
+        reloaded.setUserId(USER_ID);
+        reloaded.setCreditsTotal(30);
+        reloaded.setCreditsUsed(0);
+
+        when(quotaMapper.selectOne(any()))
+                .thenReturn(null)        // 第一次：当前周期无 quota
+                .thenReturn(reloaded);   // 第二次：insert 后 reload
+        when(quotaMapper.insert(any(AiUsageQuota.class))).thenReturn(1); // 不回填 id
+        when(quotaMapper.update(any(), any())).thenReturn(1);
+
+        guard.checkBeforeCall(USER_ID, AiFeature.WRITING_GRADE, AiKeyMode.BUILTIN);
+
+        verify(quotaMapper).insert(any(AiUsageQuota.class));
+        verify(quotaMapper, times(2)).selectOne(any()); // 初次查询 + reload
+        verify(quotaMapper).update(any(), any());
+        verify(recordMapper, never()).insert(any(AiUsageRecord.class));
+    }
+
+    // ─── 1c. BUILTIN：insert 后 id 未回填且 reload 仍查不到，抛防御异常 ────────
+
+    @Test
+    void builtinShouldThrowWhenInsertedQuotaCannotBeReloaded() {
+        when(quotaMapper.selectOne(any())).thenReturn(null); // 初次 + reload 都查不到
+        when(quotaMapper.insert(any(AiUsageQuota.class))).thenReturn(1); // 不回填 id
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+                () -> guard.checkBeforeCall(USER_ID, AiFeature.WRITING_GRADE, AiKeyMode.BUILTIN));
+        assertTrue(ex.getMessage().contains("AI quota row was created but cannot be reloaded"));
+
+        verify(quotaMapper, times(2)).selectOne(any());
+        verify(quotaMapper, never()).update(any(), any());
         verify(recordMapper, never()).insert(any(AiUsageRecord.class));
     }
 

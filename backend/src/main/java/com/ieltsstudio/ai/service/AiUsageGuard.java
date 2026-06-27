@@ -167,15 +167,24 @@ public class AiUsageGuard {
         created.setCreditsUsed(0);
         try {
             quotaMapper.insert(created);
-            return created;
         } catch (Exception dup) {
-            // 并发插入：unique key 冲突，重新查询已插入的行
+            // 并发插入：unique key (user_id, period_start) 冲突，重新查询已插入的行
             AiUsageQuota existing = quotaMapper.selectOne(q);
             if (existing != null) {
                 return existing;
             }
             throw dup;
         }
+        // insert 成功。部分 ORM/驱动不会把自增 ID 回填到 entity，
+        // 此时 created.getId() 为 null，需要重新 select 当前周期 quota 再用于后续预扣。
+        if (created.getId() != null) {
+            return created;
+        }
+        AiUsageQuota reloaded = quotaMapper.selectOne(q);
+        if (reloaded != null) {
+            return reloaded;
+        }
+        throw new IllegalStateException("AI quota row was created but cannot be reloaded");
     }
 
     // ─── USER 模式限流 ─────────────────────────────────────────────────────────
