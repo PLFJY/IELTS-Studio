@@ -12,6 +12,7 @@
 > - ⏭️ Phase 4（下一步）：前端用户中心设置 UI（`ProfileView.vue` 增加 AI 设置区，masked key 展示）。
 > - ✅ Phase 5A：现有**文本类** AI 功能接入新架构。已迁移 `AiParseService` 中的 `gradeWriting` / `translateWithContext` / `chatWithContext` 三个方法，统一走 `AiSettingsService.resolve` → `AiUsageGuard.checkBeforeCall` → `OpenAiCompatibleClient.chat` → `markSuccess`/`markFailure`；`/exams/grade-writing` 已改为需要登录。
 > - ✅ Phase 5A-polish: adjusted usage accounting so success is recorded only after provider response is successfully parsed/validated (避免返回非法 JSON / 空内容时同时记成功与失败、失败仍被扣费)。
+> - ✅ Phase 5A-local-provider-test: Phase 5A also includes local OpenAI-compatible provider tests using JDK HttpServer, covering request serialization, token field handling, sanitized errors, and text-service integration without calling real providers.
 
 ---
 
