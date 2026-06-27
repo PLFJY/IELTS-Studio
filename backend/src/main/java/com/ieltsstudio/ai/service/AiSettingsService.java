@@ -1,11 +1,15 @@
 package com.ieltsstudio.ai.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.ieltsstudio.ai.AiKeyMode;
 import com.ieltsstudio.ai.AiProviderType;
 import com.ieltsstudio.ai.AiTaskType;
 import com.ieltsstudio.ai.config.AiProviderProperties;
 import com.ieltsstudio.ai.model.AiCredentials;
 import com.ieltsstudio.ai.model.AiProviderPreset;
+import com.ieltsstudio.ai.util.AiApiKeyCrypto;
+import com.ieltsstudio.entity.UserAiSettings;
+import com.ieltsstudio.mapper.UserAiSettingsMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -15,17 +19,23 @@ import java.util.Optional;
 /**
  * AI 凭据解析服务。
  *
- * <p>本阶段只做 <b>BUILTIN</b> 模式：从 {@code application-ai.yml} 读取站点内置配置，
- * 构造 {@link AiCredentials}。</p>
+ * <p>支持两种模式：</p>
+ * <ul>
+ *   <li><b>BUILTIN</b>：从 {@code application-ai.yml} 读取站点内置配置，构造 {@link AiCredentials}。</li>
+ *   <li><b>USER</b>：从 {@code user_ai_settings} 读取用户自填配置，解密 API Key 后构造 {@link AiCredentials}。</li>
+ * </ul>
  *
- * <p>解析规则：</p>
+ * <p>BUILTIN 解析规则：</p>
  * <ul>
  *   <li>{@link AiTaskType#TEXT} → DeepSeek（{@code ai.deepseek.*}）</li>
  *   <li>{@link AiTaskType#VISION} → 根据 {@code ai.precise.provider} 返回 Qwen 或 MiMO</li>
- *   <li>API Key 未配置时抛出清晰异常，<b>不</b>泄露任何 key 片段</li>
  * </ul>
  *
- * <p><b>userId 暂不用于查库</b>，但方法签名保留，方便下一阶段接入 {@code user_ai_settings}。</p>
+ * <p>USER 解析规则：读取用户对应任务类型的 provider / baseUrl / model / encrypted key，
+ * 解密后注入 {@link AiCredentials}。任何字段缺失或解密失败都抛出清晰异常，
+ * <b>异常信息不包含 key / 密文</b>。</p>
+ *
+ * <p>降级规则：{@code userId == null}、无用户设置记录、或 {@code keyMode != USER} 时，回退到 BUILTIN。</p>
  */
 @Slf4j
 @Service
@@ -34,11 +44,13 @@ public class AiSettingsService {
 
     private final AiProviderProperties properties;
     private final AiProviderRegistry registry;
+    private final UserAiSettingsMapper userAiSettingsMapper;
+    private final AiApiKeyCrypto aiApiKeyCrypto;
 
     /**
      * 解析某用户在某任务类型下的凭据。
      *
-     * @param userId   登录用户 ID（本阶段未使用，预留）
+     * @param userId   登录用户 ID（为 null 时回退 BUILTIN）
      * @param taskType 任务类型
      * @return 凭据快照（apiKey 仅存在于后端内存）
      */
@@ -46,8 +58,90 @@ public class AiSettingsService {
         if (taskType == null) {
             throw new IllegalArgumentException("AiTaskType must not be null");
         }
-        // 本阶段固定 BUILTIN；USER 模式留待后续阶段（user_ai_settings 接入）
-        return resolveBuiltin(userId, taskType);
+        if (userId == null) {
+            return resolveBuiltin(null, taskType);
+        }
+        UserAiSettings settings = findUserSettings(userId);
+        if (settings == null || !AiKeyMode.USER.name().equals(settings.getKeyMode())) {
+            // 无用户设置或非 USER 模式：回退站点内置配置
+            return resolveBuiltin(userId, taskType);
+        }
+        return resolveUser(userId, taskType, settings);
+    }
+
+    private UserAiSettings findUserSettings(Long userId) {
+        return userAiSettingsMapper.selectOne(
+                new LambdaQueryWrapper<UserAiSettings>()
+                        .eq(UserAiSettings::getUserId, userId));
+    }
+
+    /**
+     * 解析 USER 模式凭据。任何字段缺失 / 解密失败抛 {@link IllegalStateException}，
+     * 异常信息<b>不</b>包含 key 或密文。
+     */
+    private AiCredentials resolveUser(Long userId, AiTaskType taskType, UserAiSettings settings) {
+        String providerName;
+        String baseUrl;
+        String model;
+        String encrypted;
+        switch (taskType) {
+            case TEXT -> {
+                providerName = settings.getTextProvider();
+                baseUrl = settings.getTextBaseUrl();
+                model = settings.getTextModel();
+                encrypted = settings.getTextApiKeyEncrypted();
+            }
+            case VISION -> {
+                providerName = settings.getVisionProvider();
+                baseUrl = settings.getVisionBaseUrl();
+                model = settings.getVisionModel();
+                encrypted = settings.getVisionApiKeyEncrypted();
+            }
+            default -> throw new IllegalArgumentException("Unsupported AiTaskType: " + taskType);
+        }
+
+        if (providerName == null || providerName.isBlank()) {
+            throw new IllegalStateException(
+                    "User AI provider is not configured for taskType=" + taskType);
+        }
+        AiProviderType type;
+        try {
+            type = AiProviderType.valueOf(providerName.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalStateException(
+                    "User AI provider is not valid for taskType=" + taskType);
+        }
+        if (baseUrl == null || baseUrl.isBlank()) {
+            throw new IllegalStateException(
+                    "User AI base URL is not configured for taskType=" + taskType);
+        }
+        if (model == null || model.isBlank()) {
+            throw new IllegalStateException(
+                    "User AI model is not configured for taskType=" + taskType);
+        }
+        if (encrypted == null || encrypted.isBlank()) {
+            throw new IllegalStateException(
+                    "User AI API key is not configured for taskType=" + taskType);
+        }
+        // 解密失败时 AiApiKeyCrypto 抛通用异常，不含 key / 密文
+        String apiKey = aiApiKeyCrypto.decrypt(encrypted);
+
+        // tokenField：优先取 preset；MiMO = max_completion_tokens，其余默认 max_tokens
+        String tokenField = registry.getPreset(type)
+                .map(AiProviderPreset::getTokenField)
+                .orElse("max_tokens");
+
+        AiCredentials creds = AiCredentials.builder()
+                .keyMode(AiKeyMode.USER)
+                .provider(type)
+                .taskType(taskType)
+                .baseUrl(baseUrl)
+                .model(model)
+                .apiKey(apiKey)
+                .tokenField(tokenField)
+                .build();
+        log.debug("Resolved USER {} credentials for user={} provider={}", taskType, userId, type);
+        return creds;
     }
 
     private AiCredentials resolveBuiltin(Long userId, AiTaskType taskType) {

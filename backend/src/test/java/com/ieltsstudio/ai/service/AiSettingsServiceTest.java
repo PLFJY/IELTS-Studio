@@ -5,6 +5,8 @@ import com.ieltsstudio.ai.AiProviderType;
 import com.ieltsstudio.ai.AiTaskType;
 import com.ieltsstudio.ai.config.AiProviderProperties;
 import com.ieltsstudio.ai.model.AiCredentials;
+import com.ieltsstudio.ai.util.AiApiKeyCrypto;
+import com.ieltsstudio.mapper.UserAiSettingsMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -12,12 +14,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
 
 /**
- * {@link AiSettingsService} 单元测试。
+ * {@link AiSettingsService} 单元测试（BUILTIN 模式）。
  *
- * <p>本阶段只支持 BUILTIN 模式，不查数据库、不发真实网络请求。
- * 直接构造 {@link AiProviderProperties} + {@link AiProviderRegistry} 注入。</p>
+ * <p>不查数据库、不发真实网络请求。{@link UserAiSettingsMapper} 用 Mockito mock，
+ * 默认返回 null（无用户设置），使 resolve 回退到 BUILTIN，保持本组测试原有行为。</p>
  */
 class AiSettingsServiceTest {
 
@@ -45,7 +48,10 @@ class AiSettingsServiceTest {
         registry = new AiProviderRegistry();
         registry.initBuiltinPresets();
 
-        service = new AiSettingsService(props, registry);
+        // mock mapper：selectOne 默认返回 null → resolve 回退 BUILTIN
+        UserAiSettingsMapper mapper = mock(UserAiSettingsMapper.class);
+        AiApiKeyCrypto crypto = new AiApiKeyCrypto("builtin-test-secret");
+        service = new AiSettingsService(props, registry, mapper, crypto);
     }
 
     @Test

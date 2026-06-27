@@ -32,7 +32,7 @@ public class AiProviderRegistry {
     private final Map<AiProviderType, AiProviderPreset> presets = new EnumMap<>(AiProviderType.class);
 
     @PostConstruct
-    void initBuiltinPresets() {
+    public void initBuiltinPresets() {
         register(AiProviderPreset.builder()
                 .provider(AiProviderType.DEEPSEEK)
                 .displayName("DeepSeek")

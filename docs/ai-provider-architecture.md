@@ -3,6 +3,11 @@
 > 本文件是后续 AI Provider 改造的**设计文档**，**只写设计，不实现代码**。
 > 当前阶段（Phase 1）不重构现有 Java/Vue 代码，不改依赖配置。
 > 配套阅读：[security-and-quota-plan.md](./security-and-quota-plan.md)、[database-change-guide.md](./database-change-guide.md)。
+>
+> **实现进度：**
+> - ✅ Phase 2：Provider 抽象与客户端骨架已落地（`AiTaskType` / `AiKeyMode` / `AiProviderPreset` / `AiCredentials` / `AiProviderRegistry` / `AiSettingsService` BUILTIN / `AiUsageGuard` 骨架）。
+> - ✅ Phase 3A：`user_ai_settings` / `ai_usage_quota` / `ai_usage_records` 三表 + Entity/Mapper + `AiApiKeyCrypto` 已落地。
+> - ✅ Phase 3B：用户 AI 设置后端接口已落地（`UserAiSettingsService` + `UserAiSettingsController` + DTO），`AiSettingsService` 已支持 USER 模式凭据解析；现有 AI 业务调用链尚未迁移（留待 Phase 5）。
 
 ---
 
