@@ -515,35 +515,39 @@ public class AiParseService {
             """;
 
     @SuppressWarnings("unchecked")
-    public List<Map<String, Object>> generateWordEntries(String inputText) throws Exception {
-        if (!isConfigured()) throw new IllegalStateException("DeepSeek API key未配置");
-        String truncated = inputText.length() > 3000 ? inputText.substring(0, 3000) : inputText;
-        Map<String, Object> requestBody = new LinkedHashMap<>();
-        requestBody.put("model", model);
-        requestBody.put("max_tokens", 4096);
-        requestBody.put("messages", List.of(
-                Map.of("role", "system", "content", WORD_PROMPT),
-                Map.of("role", "user", "content", truncated)
-        ));
-        String requestJson = objectMapper.writeValueAsString(requestBody);
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(baseUrl + "/chat/completions"))
-                .header("Content-Type", "application/json")
-                .header("Authorization", "Bearer " + apiKey)
-                .POST(HttpRequest.BodyPublishers.ofString(requestJson, StandardCharsets.UTF_8))
-                .timeout(Duration.ofSeconds(90))
-                .build();
-        HttpResponse<String> response = SHARED_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
-        if (response.statusCode() >= 400) throw new RuntimeException("DeepSeek API错误 HTTP " + response.statusCode());
-        JsonNode root = objectMapper.readTree(response.body());
-        String content = root.path("choices").get(0).path("message").path("content").asText().trim();
-        // Strip markdown code fences if present
-        if (content.startsWith("```")) {
-            content = content.replaceAll("^```[a-z]*\\n?", "").replaceAll("\\n?```$", "").trim();
+    public List<Map<String, Object>> generateWordEntries(Long userId, String inputText) throws Exception {
+        if (inputText == null || inputText.isBlank()) {
+            throw new IllegalArgumentException("输入文本不能为空");
         }
-        List<Map<String, Object>> entries = (List<Map<String, Object>>) objectMapper.readValue(content, List.class);
-        log.info("DeepSeek word generation parsed {} entries", entries.size());
-        return entries;
+        String truncated = inputText.length() > 3000 ? inputText.substring(0, 3000) : inputText;
+
+        AiCredentials credentials = aiSettingsService.resolve(userId, AiTaskType.TEXT);
+        aiUsageGuard.checkBeforeCall(userId, AiFeature.WORD_GENERATE, credentials.getKeyMode());
+        try {
+            AiChatResponse response = openAiCompatibleClient.chat(AiChatRequest.builder()
+                    .credentials(credentials)
+                    .messages(List.of(
+                            AiChatMessage.system(WORD_PROMPT),
+                            AiChatMessage.user(truncated)))
+                    .maxTokens(4096)
+                    .temperature(0.2)
+                    .jsonMode(true)
+                    .timeoutSeconds(90)
+                    .build());
+            String content = response.getContent() == null ? "" : response.getContent().trim();
+            // Strip markdown code fences if present（部分 provider 即使 json mode 也会包裹 code fence）
+            if (content.startsWith("```")) {
+                content = content.replaceAll("^```[a-z]*\\n?", "").replaceAll("\\n?```$", "").trim();
+            }
+            // 只有 provider 调用成功 + JSON array 解析成功才记 markSuccess。
+            List<Map<String, Object>> entries = objectMapper.readValue(content, List.class);
+            aiUsageGuard.markSuccess(userId, AiFeature.WORD_GENERATE, credentials.getKeyMode());
+            log.info("Word generation parsed {} entries", entries.size());
+            return entries;
+        } catch (Exception ex) {
+            aiUsageGuard.markFailure(userId, AiFeature.WORD_GENERATE, credentials.getKeyMode(), ex);
+            throw aiCallFailed(ex);
+        }
     }
 
     public AiParseService(ObjectMapper objectMapper,

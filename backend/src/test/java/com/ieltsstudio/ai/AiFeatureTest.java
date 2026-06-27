@@ -43,6 +43,12 @@ class AiFeatureTest {
     }
 
     @Test
+    void wordGenerateShouldBeTextCost2() {
+        assertEquals(AiTaskType.TEXT, AiFeature.WORD_GENERATE.getTaskType());
+        assertEquals(2, AiFeature.WORD_GENERATE.getBuiltinCost());
+    }
+
+    @Test
     void examParseShouldBeTextCost5() {
         assertEquals(AiTaskType.TEXT, AiFeature.EXAM_PARSE.getTaskType());
         assertEquals(5, AiFeature.EXAM_PARSE.getBuiltinCost());

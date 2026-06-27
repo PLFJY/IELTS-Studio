@@ -13,6 +13,7 @@
 > - ✅ Phase 5A：现有**文本类** AI 功能接入新架构。已迁移 `AiParseService` 中的 `gradeWriting` / `translateWithContext` / `chatWithContext` 三个方法，统一走 `AiSettingsService.resolve` → `AiUsageGuard.checkBeforeCall` → `OpenAiCompatibleClient.chat` → `markSuccess`/`markFailure`；`/exams/grade-writing` 已改为需要登录。
 > - ✅ Phase 5A-polish: adjusted usage accounting so success is recorded only after provider response is successfully parsed/validated (避免返回非法 JSON / 空内容时同时记成功与失败、失败仍被扣费)。
 > - ✅ Phase 5A-local-provider-test: Phase 5A also includes local OpenAI-compatible provider tests using JDK HttpServer, covering request serialization, token field handling, sanitized errors, and text-service integration without calling real providers.
+> - ✅ Phase 5B：继续迁移剩余 TEXT Provider 功能。已迁移 `ClozeService.generate` / `ClozeService.check` / `AiParseService.generateWordEntries` 三个方法走新架构（`AiSettingsService.resolve(userId, TEXT)` → `AiUsageGuard.checkBeforeCall` → `OpenAiCompatibleClient.chat` → JSON 解析成功后 `markSuccess`，失败 `markFailure`）；新增 `AiFeature.WORD_GENERATE`（TEXT, cost=2）；`ClozeService` 与 `WordBookController` 接口改为从 `AuthUser` 注入 `userId`，禁止前端传 `userId`；`AsyncWordService` 两个调用点已下传 `userId`；provider 错误统一脱敏返回通用提示。
 
 ---
 
@@ -152,6 +153,7 @@ SomeService 组装业务结果 → Result.success(...)
 | Phase 3B-polish | ✅ 已完成 | 安全补强：DTO `toString()` 防泄露、`resolveUser` 解密前校验 provider-taskType、`requireUserId` 防御 |
 | Phase 4 | ⏭ 下一步 | 前端用户中心 AI 设置 UI：在 `ProfileView.vue` 增加 AI 设置区，masked key 展示（`frontend/src/views/ProfileView.vue`、`frontend/src/api/`） |
 | Phase 5A | ✅ 已完成 | 现有**文本类** AI 功能接入新架构：迁移 `AiParseService.gradeWriting` / `translateWithContext` / `chatWithContext` 走 `AiSettingsService` + `AiUsageGuard` + `OpenAiCompatibleClient`；`/exams/grade-writing` 改为需要登录 |
-| Phase 5B/5C | 后续 | 其余 AI 功能接入新架构：普通试卷解析、PDF/图片精准解析、Qwen/MiMO 多模态、`ClozeService`、`AsyncParseService`、词汇生成等 |
+| Phase 5B | ✅ 已完成 | 继续迁移 TEXT Provider 功能：`ClozeService.generate` / `ClozeService.check` / `AiParseService.generateWordEntries` 走新架构；新增 `AiFeature.WORD_GENERATE`；`/words/cloze/*` 接口从 `AuthUser` 注入 `userId`；`AsyncWordService` 调用点下传 `userId` |
+| Phase 5C | 后续 | 其余 AI 功能接入新架构：普通试卷解析、PDF/图片精准解析、Qwen/MiMO 多模态、`AsyncParseService`、Writing guidance workflow 等 |
 
 > 各阶段应独立 PR，小步推进，每阶段都要跑通验证命令（`mvn test` / `npm run build`）。

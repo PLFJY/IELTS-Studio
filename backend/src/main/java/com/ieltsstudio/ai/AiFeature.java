@@ -26,6 +26,9 @@ public enum AiFeature {
     /** 完形填空批改（/words/cloze/check），文本任务，cost=1 */
     CLOZE_CHECK(AiTaskType.TEXT, 1),
 
+    /** 词汇生成 / quick add 相关 AI 词条解析，文本任务，cost=2 */
+    WORD_GENERATE(AiTaskType.TEXT, 2),
+
     /** 普通试卷解析（/exams/upload 普通模式），文本任务，cost=5 */
     EXAM_PARSE(AiTaskType.TEXT, 5),
 
