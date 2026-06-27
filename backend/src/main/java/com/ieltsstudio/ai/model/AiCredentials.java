@@ -43,6 +43,11 @@ public class AiCredentials {
     /** Token 字段名：{@code max_tokens} 或 {@code max_completion_tokens} */
     private final String tokenField;
 
+    /** 是否已配置 API Key（非 null 且非空白） */
+    public boolean hasApiKey() {
+        return apiKey != null && !apiKey.isBlank();
+    }
+
     /**
      * 脱敏 toString：只输出 key 是否已配置，不输出 key 本身。
      * 避免被无意中打印到日志或异常栈。
