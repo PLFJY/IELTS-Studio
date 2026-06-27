@@ -311,4 +311,32 @@ class UserAiSettingsServiceTest {
         assertTrue(presets.get("vision").stream().anyMatch(p -> "MIMO".equals(p.getProvider())));
         assertTrue(presets.get("vision").stream().anyMatch(p -> "OPENAI_COMPATIBLE".equals(p.getProvider())));
     }
+
+    // ─── requireUserId 防御性校验 ───────────────────────────────────────────
+    //
+    // Controller 正常会传 authUser.getId()，但 Service 层自己也应拒绝 null userId，
+    // 避免后续查询/写入出现 NPE 或脏数据。
+
+    @Test
+    void getSettingsShouldRejectNullUserId() {
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> service.getSettings(null));
+        assertTrue(ex.getMessage().contains("userId"));
+    }
+
+    @Test
+    void updateSettingsShouldRejectNullUserId() {
+        AiSettingsUpdateRequest req = updateRequest("USER",
+                providerConfig("DEEPSEEK", null, null, TEST_KEY, null), null);
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> service.updateSettings(null, req));
+        assertTrue(ex.getMessage().contains("userId"));
+    }
+
+    @Test
+    void getOrCreateEntityShouldRejectNullUserId() {
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> service.getOrCreateEntity(null));
+        assertTrue(ex.getMessage().contains("userId"));
+    }
 }

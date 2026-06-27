@@ -199,4 +199,31 @@ class AiSettingsServiceUserModeTest {
         assertEquals(AiKeyMode.BUILTIN, creds.getKeyMode());
         assertEquals("sk-deepseek-builtin", creds.getApiKey());
     }
+
+    // ─── 8. USER 模式 provider 不支持 taskType 必须拒绝（解密前） ──────────────
+    //
+    // 场景：脏数据 taskType=TEXT 但 provider=QWEN（Qwen 只支持 VISION）。
+    // 必须在解密 API Key 之前拒绝，避免对脏数据做无谓解密；异常信息不含 key / 密文。
+
+    @Test
+    void userModeShouldRejectProviderThatDoesNotSupportTaskType() {
+        UserAiSettings s = userSettings();
+        s.setTextProvider(AiProviderType.QWEN.name()); // QWEN 不支持 TEXT
+        s.setTextBaseUrl("https://dashscope.aliyuncs.com/compatible-mode/v1");
+        s.setTextModel("qwen3.6-plus");
+        String encrypted = crypto.encrypt(USER_KEY);
+        s.setTextApiKeyEncrypted(encrypted);
+        when(mapper.selectOne(any())).thenReturn(s);
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+                () -> service.resolve(100L, AiTaskType.TEXT));
+
+        // 异常信息不含明文 key
+        assertFalse(ex.getMessage().contains(USER_KEY));
+        assertFalse(ex.getMessage().contains("sk-"));
+        // 异常信息不含密文
+        assertFalse(ex.getMessage().contains(encrypted));
+        // 异常信息提示 taskType 不被支持
+        assertTrue(ex.getMessage().contains("taskType=TEXT"));
+    }
 }

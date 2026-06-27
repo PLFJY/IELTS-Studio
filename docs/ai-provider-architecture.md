@@ -8,6 +8,8 @@
 > - ✅ Phase 2：Provider 抽象与客户端骨架已落地（`AiTaskType` / `AiKeyMode` / `AiProviderPreset` / `AiCredentials` / `AiProviderRegistry` / `AiSettingsService` BUILTIN / `AiUsageGuard` 骨架）。
 > - ✅ Phase 3A：`user_ai_settings` / `ai_usage_quota` / `ai_usage_records` 三表 + Entity/Mapper + `AiApiKeyCrypto` 已落地。
 > - ✅ Phase 3B：用户 AI 设置后端接口已落地（`UserAiSettingsService` + `UserAiSettingsController` + DTO），`AiSettingsService` 已支持 USER 模式凭据解析；现有 AI 业务调用链尚未迁移（留待 Phase 5）。
+> - ✅ Phase 3B-polish：安全与一致性补强。DTO 不再使用 `@Data`，`apiKey` 字段通过 `@ToString.Exclude` 排除；`AiSettingsService.resolveUser` 在解密前校验 provider 是否支持当前 `taskType`；`UserAiSettingsService` 公共方法加 `requireUserId` 防御。
+> - ⏭️ Phase 4（下一步）：前端用户中心设置 UI（`ProfileView.vue` 增加 AI 设置区，masked key 展示）。
 
 ---
 

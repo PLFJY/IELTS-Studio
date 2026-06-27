@@ -111,6 +111,12 @@ public class AiSettingsService {
             throw new IllegalStateException(
                     "User AI provider is not valid for taskType=" + taskType);
         }
+        // 校验 provider 支持当前 taskType（如 TEXT 任务不允许用 Qwen）。
+        // 必须在解密 API Key 之前完成，避免对脏数据做无谓解密；异常信息不含 key / 密文。
+        if (!registry.supports(type, taskType)) {
+            throw new IllegalStateException(
+                    "User AI provider does not support taskType=" + taskType);
+        }
         if (baseUrl == null || baseUrl.isBlank()) {
             throw new IllegalStateException(
                     "User AI base URL is not configured for taskType=" + taskType);

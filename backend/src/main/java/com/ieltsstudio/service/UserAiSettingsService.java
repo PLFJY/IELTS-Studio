@@ -49,9 +49,20 @@ public class UserAiSettingsService {
     private final AiApiKeyCrypto aiApiKeyCrypto;
 
     /**
+     * 防御性校验：Controller 正常会传 {@code authUser.getId()}，
+     * 但 Service 层自己也应拒绝 null userId，避免后续查询/写入出现 NPE 或脏数据。
+     */
+    private void requireUserId(Long userId) {
+        if (userId == null) {
+            throw new IllegalArgumentException("userId must not be null");
+        }
+    }
+
+    /**
      * 获取当前用户 AI 设置；无记录时创建默认 BUILTIN 设置并返回。
      */
     public AiSettingsResponse getSettings(Long userId) {
+        requireUserId(userId);
         return toResponse(getOrCreateEntity(userId));
     }
 
@@ -62,6 +73,7 @@ public class UserAiSettingsService {
      * 真正解析 credentials 时（{@code AiSettingsService.resolve}）才校验 key 是否存在。</p>
      */
     public AiSettingsResponse updateSettings(Long userId, AiSettingsUpdateRequest request) {
+        requireUserId(userId);
         AiKeyMode mode = parseKeyMode(request.getKeyMode());
 
         UserAiSettings entity = getOrCreateEntity(userId);
@@ -83,6 +95,7 @@ public class UserAiSettingsService {
      * 获取或创建用户设置实体。无记录时插入一条默认 BUILTIN 记录（不含任何 API Key）。
      */
     public UserAiSettings getOrCreateEntity(Long userId) {
+        requireUserId(userId);
         UserAiSettings existing = findByUserId(userId);
         if (existing != null) {
             return existing;

@@ -1,7 +1,9 @@
 package com.ieltsstudio.dto.ai;
 
 import jakarta.validation.constraints.NotBlank;
-import lombok.Data;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.ToString;
 
 /**
  * 保存某一类 Provider（text / vision）配置的请求体。
@@ -14,9 +16,13 @@ import lombok.Data;
  *   <li>{@code clearApiKey = true}：清空旧 key（忽略 {@code apiKey}）。</li>
  * </ul>
  *
- * <p><b>安全：</b>明文 apiKey 仅在后端内存中短暂存在，立即加密入库；不返回前端。</p>
+ * <p><b>安全：</b>明文 apiKey 仅在后端内存中短暂存在，立即加密入库；不返回前端。
+ * {@link #toString()} 已通过 {@link ToString.Exclude} 排除 {@code apiKey}，
+ * 避免明文 key 被无意中打印到日志或异常栈。</p>
  */
-@Data
+@Getter
+@Setter
+@ToString
 public class AiProviderConfigRequest {
 
     /** Provider 标识，必须能解析为 {@code AiProviderType} */
@@ -29,7 +35,8 @@ public class AiProviderConfigRequest {
     /** 模型名；预设 Provider 可为空 */
     private String model;
 
-    /** 明文 API Key：null=不改，非空=加密保存；clearApiKey=true 时忽略 */
+    /** 明文 API Key：null=不改，非空=加密保存；clearApiKey=true 时忽略。已排除出 toString */
+    @ToString.Exclude
     private String apiKey;
 
     /** 是否清空旧 key */
