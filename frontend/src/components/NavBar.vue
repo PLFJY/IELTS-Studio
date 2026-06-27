@@ -3,7 +3,7 @@
     <div class="nav-container">
       <!-- Logo -->
       <router-link to="/" class="nav-logo">
-        <span class="logo-icon">✦</span>
+        <i class="fa-solid fa-wand-magic-sparkles logo-icon"></i>
         <span class="logo-text">IELTS Studio</span>
       </router-link>
 
@@ -75,9 +75,11 @@
         <router-link to="/words" class="mobile-link" @click="mobileOpen = false">背单词</router-link>
         <router-link to="/exams" class="mobile-link" @click="mobileOpen = false">模拟考试</router-link>
         <div class="mobile-divider"></div>
-        <a class="mobile-link" href="https://github.com/Pandlagon/IELTS-Studio" target="_blank" rel="noopener" @click="mobileOpen = false">⭐ GitHub Star</a>
+        <a class="mobile-link" href="https://github.com/Pandlagon/IELTS-Studio" target="_blank" rel="noopener" @click="mobileOpen = false"><i class="fa-solid fa-star"></i> GitHub Star</a>
         <button class="mobile-link" @click="themeStore.toggle(); mobileOpen = false">
-          {{ themeStore.isDark ? '☀️ 亮色模式' : '🌙 深色模式' }}
+          <i v-if="themeStore.isDark" class="fa-solid fa-sun"></i>
+          <i v-else class="fa-solid fa-moon"></i>
+          {{ themeStore.isDark ? '亮色模式' : '深色模式' }}
         </button>
         <div class="mobile-divider"></div>
         <template v-if="!authStore.isLoggedIn">

@@ -105,7 +105,7 @@
                   <button class="tb-btn" :disabled="translateBubble.loading" @click="doTranslate">
                     {{ translateBubble.loading ? '翻译中...' : '翻译' }}
                   </button>
-                  <button class="tb-close" @click="hideTranslateBubble">×</button>
+                  <button class="tb-close" @click="hideTranslateBubble"><i class="fa-solid fa-xmark"></i></button>
                 </div>
                 <div v-if="translateBubble.translation" class="tb-result">
                   <div class="tb-translation">{{ translateBubble.translation }}</div>
@@ -115,7 +115,7 @@
               <!-- Visual Data Panel (charts + tables) -->
               <div v-if="passageVisual.hasVisual" class="result-visual-panel">
                 <div class="rvp-header">
-                  <span class="rvp-title">📊 图表数据可视化</span>
+                  <span class="rvp-title"><i class="fa-solid fa-chart-column"></i> 图表数据可视化</span>
                   <div class="rvp-header-meta" v-if="activeVisualChart">
                     <span class="rvp-chart-title" v-if="activeVisualChart.chartTitle">{{ activeVisualChart.chartTitle }}</span>
                     <span class="rvp-sub" v-if="activeVisualChart.chartType">{{ activeVisualChart.chartType }}</span>
@@ -172,7 +172,7 @@
                 <button class="tb-btn" :disabled="translateBubble.loading" @click="doTranslate">
                   {{ translateBubble.loading ? '翻译中...' : '翻译' }}
                 </button>
-                <button class="tb-close" @click="hideTranslateBubble">×</button>
+                <button class="tb-close" @click="hideTranslateBubble"><i class="fa-solid fa-xmark"></i></button>
               </div>
               <div v-if="translateBubble.translation" class="tb-result">
                 <div class="tb-translation">{{ translateBubble.translation }}</div>
@@ -216,7 +216,7 @@
                         <div class="ai-band-badge">Band {{ q.aiGrade.band }}</div>
                         <span class="ai-grade-label">AI评分</span>
                       </div>
-                      <div v-else-if="q.userAnswer" class="ai-grade-pending">⏳ AI评分中...</div>
+                      <div v-else-if="q.userAnswer" class="ai-grade-pending"><i class="fa-solid fa-hourglass-half"></i> AI评分中...</div>
                       <div v-if="q.aiGrade && (q.aiGrade.bandDescription || hasCriterionBands(q.aiGrade))" class="ai-overview-panel">
                         <p v-if="q.aiGrade.bandDescription" class="ai-overview-text">{{ q.aiGrade.bandDescription }}</p>
                         <div v-if="hasCriterionBands(q.aiGrade)" class="criterion-bands">
@@ -305,7 +305,7 @@
               <button class="tb-btn" :disabled="translateBubble.loading" @click="doTranslate">
                 {{ translateBubble.loading ? '翻译中...' : '翻译' }}
               </button>
-              <button class="tb-close" @click="hideTranslateBubble">×</button>
+              <button class="tb-close" @click="hideTranslateBubble"><i class="fa-solid fa-xmark"></i></button>
             </div>
             <div v-if="translateBubble.translation" class="tb-result">
               <div class="tb-translation">{{ translateBubble.translation }}</div>
@@ -345,7 +345,7 @@
                       <div class="ai-band-badge">Band {{ q.aiGrade.band }}</div>
                       <span class="ai-grade-label">AI评分</span>
                     </div>
-                    <div v-else-if="q.userAnswer" class="ai-grade-pending">⏳ AI评分中...</div>
+                    <div v-else-if="q.userAnswer" class="ai-grade-pending"><i class="fa-solid fa-hourglass-half"></i> AI评分中...</div>
                     <div v-if="q.aiGrade && (q.aiGrade.bandDescription || hasCriterionBands(q.aiGrade))" class="ai-overview-panel">
                       <p v-if="q.aiGrade.bandDescription" class="ai-overview-text">{{ q.aiGrade.bandDescription }}</p>
                       <div v-if="hasCriterionBands(q.aiGrade)" class="criterion-bands">
@@ -420,14 +420,14 @@
     <!-- FAB Group -->
     <div class="result-fabs">
       <button class="fab-minimize-btn" @click.stop="showFabs = !showFabs" :title="showFabs ? '隐藏工具栏' : '显示工具栏'">
-        {{ showFabs ? '✕' : '🛠️' }}
+        <i :class="showFabs ? 'fa-solid fa-xmark' : 'fa-solid fa-screwdriver-wrench'"></i>
       </button>
       <template v-if="showFabs">
         <!-- Translate FAB -->
         <div class="translate-fab" :class="{ active: translateMode }">
           <div class="fab-row">
             <button class="fab-toggle tl-toggle" @click.stop="toggleTranslate" :title="translateMode ? '退出翻译模式' : '翻译'">
-              <span class="fab-icon">🌐</span>
+              <span class="fab-icon"><i class="fa-solid fa-globe"></i></span>
               <span class="fab-label">{{ translateMode ? '退出翻译' : '翻译' }}</span>
             </button>
           </div>
@@ -439,13 +439,13 @@
               :class="{ 'ai-maximized': aiMaximized }"
               :style="!aiMaximized ? { left: aiPos.x + 'px', top: aiPos.y + 'px', width: aiSize.w + 'px', height: aiSize.h + 'px' } : {}">
               <div class="ai-chat-header" @mousedown.prevent="startDrag">
-                <span>🤖 AI 助手</span>
+                <span><i class="fa-solid fa-robot"></i> AI 助手</span>
                 <div class="ai-header-actions">
                   <button class="ai-chat-btn" @click.stop="aiMaximized = !aiMaximized" :title="aiMaximized ? '还原' : '放大'">
                     <svg v-if="!aiMaximized" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
                     <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="5" y="7" width="14" height="14" rx="1"/><path d="M9 7V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2"/></svg>
                   </button>
-                  <button class="ai-chat-btn" @click.stop="aiChatOpen = false">×</button>
+                  <button class="ai-chat-btn" @click.stop="aiChatOpen = false"><i class="fa-solid fa-xmark"></i></button>
                 </div>
               </div>
               <div v-if="result?.isCollection && aiContextOptions.length" class="ai-context-selector">
@@ -480,7 +480,7 @@
           </transition>
           <div class="fab-row">
             <button class="fab-toggle ai-toggle" @click.stop="aiChatOpen = !aiChatOpen" title="AI 助手">
-              <span class="fab-icon">🤖</span>
+              <span class="fab-icon"><i class="fa-solid fa-robot"></i></span>
               <span class="fab-label">{{ aiChatOpen ? '关闭助手' : 'AI 助手' }}</span>
             </button>
           </div>
