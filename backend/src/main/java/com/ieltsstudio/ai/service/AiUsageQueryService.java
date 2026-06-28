@@ -115,6 +115,7 @@ public class AiUsageQueryService {
         d.setFeature(r.getFeature());
         d.setCost(r.getCost());
         d.setKeyMode(r.getKeyMode());
+        d.setProvider(r.getProvider());
         d.setStatus(r.getStatus());
         d.setErrorMessage(r.getErrorMessage());
         return d;

@@ -21,6 +21,7 @@
 > - ✅ Phase 6A：`AiUsageGuard` 后端额度与流水落地。BUILTIN 每周 30 credits + 预扣（原子 `UPDATE ... WHERE credits_total - credits_used >= cost`）+ 失败回滚（`GREATEST(credits_used - cost, 0)`）；USER 模式本机内存滑动窗口限流（每用户每 feature 每分钟 20 次）；`ai_usage_records` 写 SUCCESS / FAILED / REJECTED 流水；errorMessage 脱敏（`Authorization: Bearer xxx` / `Bearer xxx` / `sk-xxx` 前缀替换为 `[REDACTED]` + 截断到 500 字符）。
 > - ✅ Phase 6A-polish：`AiUsageGuard.getOrCreateCurrentQuota` 在 `insert` 成功但 ID 未回填到 entity 时，defensively reload 当前周期 quota 行再走预扣；新增 `builtinShouldReloadQuotaWhenInsertedIdNotReturned` 与 `builtinShouldThrowWhenInsertedQuotaCannotBeReloaded` 两个测试锁住行为。
 > - ✅ Phase 6B-1：AI 用量查询接口与用户中心额度展示。后端新增 `GET /api/users/me/ai-usage`（`UserAiUsageController` + `AiUsageQueryService`，只读不创建 quota 行、不扣费，无 quota 时返回默认视图 30/0/30）；新增 `UserAiUsageDto` / `AiUsageRecordDto`；userId 只能从 `@AuthenticationPrincipal AuthUser` 取；最近 20 条 records 按 createdAt 倒序返回。前端新增 `api/aiUsage.js` + `components/profile/AiUsageCard.vue`（BUILTIN 模式展示本周额度/进度条/周期/最近 20 条 records；USER 模式展示「不消耗站点额度」提示 + 弱化站点额度参考 + records；feature 中文映射；刷新按钮；错误降级提示），并集成到 `ProfileView.vue` 的 `AiSettingsCard` 之后。新增 `AiUsageQueryServiceTest`（6 用例）覆盖默认视图、现有 quota、USER 模式、records 顺序、不创建 quota、null userId 拒绝。
+> - ✅ Phase 6B-2A：`ai_usage_records.provider` 字段落地。`AiUsageGuard` 新增 provider-aware overload（`checkBeforeCall(userId, feature, keyMode, provider)` / `markSuccess(...)` / `markFailure(..., provider, ex)`），旧三参数方法保留兼容并委托到新方法传 `provider=null`；`insertRecord` private helper 新增 `provider` 参数，`record.setProvider(provider)` 写入枚举名（`DEEPSEEK` / `QWEN` / `MIMO` / `OPENAI_COMPATIBLE` 或 null），不包含 baseUrl/model/API Key；BUILTIN credits 不足与 USER rate limit 触发的 REJECTED 流水也写 provider；`AiParseService` / `ClozeService` / `QwenAiParseService` 三个 service 共 45 个 AI 调用点迁移至 provider-aware overload（统一通过 `providerName(credentials)` helper 取 `credentials.getProvider().name()`）；`AiUsageRecordDto` 新增 `provider` 字段并在 `AiUsageQueryService.toDto` 透传；前端 `AiUsageCard.vue` records 表新增 Provider 列（`DEEPSEEK→DeepSeek` / `QWEN→Qwen` / `MIMO→MiMO` / `OPENAI_COMPATIBLE→OpenAI-compatible` / null→`-`）。新增 `AiUsageGuardTest` 5 个 provider 用例覆盖 REJECTED-BUILTIN / REJECTED-USER / SUCCESS / FAILED / 旧方法 null；更新 8 个已有 service 测试的 `verify(aiUsageGuard)` 调用以匹配新 4/5 参数签名；`AiUsageQueryServiceTest` 新增 provider 透传断言。后端 `mvn test` 184 用例通过，前端 `npm run build` 通过。
 
 ---
 
@@ -166,6 +167,8 @@ SomeService 组装业务结果 → Result.success(...)
 | Phase 5C-3 | ✅ 已完成 | Legacy AI 调用清理：`generateWritingGuidance` / `extractHeadingsWithAi` 迁移至新架构（`AiFeature.WRITING_GUIDANCE` / `HEADING_EXTRACT`）；新增 `postProcess(Long userId, ...)` overload；删除 `callDeepSeek` / `SHARED_HTTP_CLIENT` / 旧 DeepSeek `@Value` 字段 / `hasLegacyDeepSeekKey()`；删除死代码 `QwenDocumentParseService.java`；生产 AI 调用统一走 `AiSettingsService + AiUsageGuard + OpenAiCompatibleClient` |
 | Phase 6A | ✅ 已完成 | `AiUsageGuard` 后端额度与流水落地：BUILTIN 每周 30 credits、预扣+失败回滚（原子 `UPDATE ... WHERE credits_total - credits_used >= cost`）、USER 内存 rate limit（每用户每 feature 每分钟 20 次）、`ai_usage_records` 写 SUCCESS / FAILED / REJECTED 流水、errorMessage 脱敏（Authorization/Bearer/sk- 前缀 + 截断 500） |
 | Phase 6B-1 | ✅ 已完成 | AI usage 查询接口与用户中心额度展示：`GET /api/users/me/ai-usage`，展示当前周期 credits、keyMode、最近 usage records |
-| Phase 6B-2 | 后续 | Redis 分布式限流、provider 字段统计、管理端统计 |
+| Phase 6B-2A | ✅ 已完成 | `ai_usage_records.provider` 字段落地：`AiUsageGuard` provider-aware overload，主 AI 调用点写入 provider，用户中心最近记录展示 provider |
+| Phase 6B-2B | 后续 | 管理端 usage 统计接口与统计面板 |
+| Phase 6B-2C | 后续 | Redis 分布式 rate limit |
 
 > 各阶段应独立 PR，小步推进，每阶段都要跑通验证命令（`mvn test` / `npm run build`）。

@@ -128,7 +128,8 @@ public class ClozeService {
                 wordListSb, diff);
 
         AiCredentials credentials = aiSettingsService.resolve(userId, AiTaskType.TEXT);
-        aiUsageGuard.checkBeforeCall(userId, AiFeature.CLOZE_GENERATE, credentials.getKeyMode());
+        String provider = providerName(credentials);
+        aiUsageGuard.checkBeforeCall(userId, AiFeature.CLOZE_GENERATE, credentials.getKeyMode(), provider);
         try {
             AiChatResponse response = openAiCompatibleClient.chat(AiChatRequest.builder()
                     .credentials(credentials)
@@ -143,10 +144,10 @@ public class ClozeService {
             // 只有 provider 调用成功 + JSON 解析成功才记 markSuccess，
             // 否则解析异常会进入 catch 走 markFailure，避免一次调用同时记成功与失败。
             Map<String, Object> parsed = objectMapper.readValue(response.getContent(), Map.class);
-            aiUsageGuard.markSuccess(userId, AiFeature.CLOZE_GENERATE, credentials.getKeyMode());
+            aiUsageGuard.markSuccess(userId, AiFeature.CLOZE_GENERATE, credentials.getKeyMode(), provider);
             return parsed;
         } catch (Exception ex) {
-            aiUsageGuard.markFailure(userId, AiFeature.CLOZE_GENERATE, credentials.getKeyMode(), ex);
+            aiUsageGuard.markFailure(userId, AiFeature.CLOZE_GENERATE, credentials.getKeyMode(), provider, ex);
             throw aiCallFailed(ex);
         }
     }
@@ -232,7 +233,8 @@ public class ClozeService {
         }
 
         AiCredentials credentials = aiSettingsService.resolve(userId, AiTaskType.TEXT);
-        aiUsageGuard.checkBeforeCall(userId, AiFeature.CLOZE_CHECK, credentials.getKeyMode());
+        String provider = providerName(credentials);
+        aiUsageGuard.checkBeforeCall(userId, AiFeature.CLOZE_CHECK, credentials.getKeyMode(), provider);
         try {
             AiChatResponse response = openAiCompatibleClient.chat(AiChatRequest.builder()
                     .credentials(credentials)
@@ -245,10 +247,10 @@ public class ClozeService {
                     .timeoutSeconds(90)
                     .build());
             Map<String, Object> parsed = objectMapper.readValue(response.getContent(), Map.class);
-            aiUsageGuard.markSuccess(userId, AiFeature.CLOZE_CHECK, credentials.getKeyMode());
+            aiUsageGuard.markSuccess(userId, AiFeature.CLOZE_CHECK, credentials.getKeyMode(), provider);
             return parsed;
         } catch (Exception ex) {
-            aiUsageGuard.markFailure(userId, AiFeature.CLOZE_CHECK, credentials.getKeyMode(), ex);
+            aiUsageGuard.markFailure(userId, AiFeature.CLOZE_CHECK, credentials.getKeyMode(), provider, ex);
             throw aiCallFailed(ex);
         }
     }
@@ -263,5 +265,10 @@ public class ClozeService {
     private RuntimeException aiCallFailed(Exception ex) {
         log.warn("Cloze AI 调用失败: {}", ex.getClass().getSimpleName());
         return new RuntimeException("AI 服务暂时不可用，请稍后重试");
+    }
+
+    /** 仅返回 provider 枚举名或 null，避免在 usage record 中暴露 baseUrl / model / API Key */
+    private static String providerName(AiCredentials credentials) {
+        return credentials.getProvider() == null ? null : credentials.getProvider().name();
     }
 }

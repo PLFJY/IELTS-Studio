@@ -117,9 +117,9 @@ class AiParseServiceLegacyCleanupTest {
         // 走 USER credentials
         verify(aiSettingsService).resolve(USER_ID, AiTaskType.TEXT);
         // checkBeforeCall + markSuccess，不 markFailure
-        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.WRITING_GUIDANCE, AiKeyMode.USER);
-        verify(aiUsageGuard).markSuccess(USER_ID, AiFeature.WRITING_GUIDANCE, AiKeyMode.USER);
-        verify(aiUsageGuard, never()).markFailure(any(), any(), any(), any());
+        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.WRITING_GUIDANCE, AiKeyMode.USER, "DEEPSEEK");
+        verify(aiUsageGuard).markSuccess(USER_ID, AiFeature.WRITING_GUIDANCE, AiKeyMode.USER, "DEEPSEEK");
+        verify(aiUsageGuard, never()).markFailure(any(), any(), any(), any(), any());
 
         // 请求体携带 USER credentials（jsonMode=true, maxTokens=600）
         ArgumentCaptor<AiChatRequest> captor = ArgumentCaptor.forClass(AiChatRequest.class);
@@ -143,8 +143,8 @@ class AiParseServiceLegacyCleanupTest {
 
         // markFailure，不 markSuccess
         verify(aiUsageGuard).markFailure(eq(USER_ID), eq(AiFeature.WRITING_GUIDANCE),
-                eq(AiKeyMode.USER), any());
-        verify(aiUsageGuard, never()).markSuccess(any(), any(), any());
+                eq(AiKeyMode.USER), eq("DEEPSEEK"), any());
+        verify(aiUsageGuard, never()).markSuccess(any(), any(), any(), any());
 
         // 异常 message 不含 key（provider 错误已脱敏）
         String msg = ex.getMessage() == null ? "" : ex.getMessage();
@@ -182,9 +182,9 @@ class AiParseServiceLegacyCleanupTest {
 
         // 走新架构：resolve + checkBeforeCall + markSuccess，不 markFailure
         verify(aiSettingsService).resolve(USER_ID, AiTaskType.TEXT);
-        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.HEADING_EXTRACT, AiKeyMode.USER);
-        verify(aiUsageGuard).markSuccess(USER_ID, AiFeature.HEADING_EXTRACT, AiKeyMode.USER);
-        verify(aiUsageGuard, never()).markFailure(any(), any(), any(), any());
+        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.HEADING_EXTRACT, AiKeyMode.USER, "DEEPSEEK");
+        verify(aiUsageGuard).markSuccess(USER_ID, AiFeature.HEADING_EXTRACT, AiKeyMode.USER, "DEEPSEEK");
+        verify(aiUsageGuard, never()).markFailure(any(), any(), any(), any(), any());
     }
 
     // ── 4. extractHeadingsWithAi 失败时 markFailure，返回空 map 不泄露 key ─────
@@ -210,8 +210,8 @@ class AiParseServiceLegacyCleanupTest {
 
         // markFailure，不 markSuccess
         verify(aiUsageGuard).markFailure(eq(USER_ID), eq(AiFeature.HEADING_EXTRACT),
-                eq(AiKeyMode.USER), any());
-        verify(aiUsageGuard, never()).markSuccess(any(), any(), any());
+                eq(AiKeyMode.USER), eq("DEEPSEEK"), any());
+        verify(aiUsageGuard, never()).markSuccess(any(), any(), any(), any());
 
         // 最终 options 不含 key（fallback 后 options 可能仍是字符串 "i-viii"，
         // 也可能被替换为 map —— 失败时 headingMap 为空，fixRangeOptions 不替换）
@@ -251,7 +251,7 @@ class AiParseServiceLegacyCleanupTest {
         verify(aiSettingsService, never()).resolve(any(), any());
         verify(openAiCompatibleClient, never()).chat(any());
         verify(aiUsageGuard, never()).checkBeforeCall(any(), any(), any());
-        verify(aiUsageGuard, never()).markSuccess(any(), any(), any());
-        verify(aiUsageGuard, never()).markFailure(any(), any(), any(), any());
+        verify(aiUsageGuard, never()).markSuccess(any(), any(), any(), any());
+        verify(aiUsageGuard, never()).markFailure(any(), any(), any(), any(), any());
     }
 }

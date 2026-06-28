@@ -548,7 +548,8 @@ public class QwenAiParseService {
                                                     List<Map<String, Object>> userContent) throws Exception {
         int maxTokens = resolveVisionMaxTokens(credentials);
         int timeoutSeconds = Math.max(60, httpTimeoutSeconds);
-        aiUsageGuard.checkBeforeCall(userId, AiFeature.EXAM_PRECISE_PARSE, credentials.getKeyMode());
+        String provider = providerName(credentials);
+        aiUsageGuard.checkBeforeCall(userId, AiFeature.EXAM_PRECISE_PARSE, credentials.getKeyMode(), provider);
         try {
             AiChatResponse response = openAiCompatibleClient.chat(AiChatRequest.builder()
                     .credentials(credentials)
@@ -563,10 +564,10 @@ public class QwenAiParseService {
             String content = stripCodeFence(response.getContent());
             Map<String, Object> parsed = readJsonMap(content);
             Map<String, Object> normalized = normalizeParsedResult(parsed);
-            aiUsageGuard.markSuccess(userId, AiFeature.EXAM_PRECISE_PARSE, credentials.getKeyMode());
+            aiUsageGuard.markSuccess(userId, AiFeature.EXAM_PRECISE_PARSE, credentials.getKeyMode(), provider);
             return normalized;
         } catch (Exception ex) {
-            aiUsageGuard.markFailure(userId, AiFeature.EXAM_PRECISE_PARSE, credentials.getKeyMode(), ex);
+            aiUsageGuard.markFailure(userId, AiFeature.EXAM_PRECISE_PARSE, credentials.getKeyMode(), provider, ex);
             throw aiCallFailed(ex);
         }
     }
@@ -597,6 +598,11 @@ public class QwenAiParseService {
     private RuntimeException aiCallFailed(Exception ex) {
         log.warn("Vision AI 调用失败: {}", ex.getClass().getSimpleName());
         return new RuntimeException("AI 精准解析暂时不可用，请稍后重试");
+    }
+
+    /** 仅返回 provider 枚举名或 null，避免在 usage record 中暴露 baseUrl / model / API Key */
+    private static String providerName(AiCredentials credentials) {
+        return credentials.getProvider() == null ? null : credentials.getProvider().name();
     }
 
     @SuppressWarnings("unchecked")

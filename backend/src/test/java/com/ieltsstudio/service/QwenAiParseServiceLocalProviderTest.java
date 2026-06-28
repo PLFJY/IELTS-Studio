@@ -153,8 +153,8 @@ class QwenAiParseServiceLocalProviderTest {
                 "body should not contain real provider domain");
 
         // usage guard：成功路径
-        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.EXAM_PRECISE_PARSE, AiKeyMode.USER);
-        verify(aiUsageGuard).markSuccess(USER_ID, AiFeature.EXAM_PRECISE_PARSE, AiKeyMode.USER);
-        verify(aiUsageGuard, never()).markFailure(any(), any(), any(), any());
+        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.EXAM_PRECISE_PARSE, AiKeyMode.USER, "QWEN");
+        verify(aiUsageGuard).markSuccess(USER_ID, AiFeature.EXAM_PRECISE_PARSE, AiKeyMode.USER, "QWEN");
+        verify(aiUsageGuard, never()).markFailure(any(), any(), any(), any(), any());
     }
 }

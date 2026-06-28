@@ -134,8 +134,8 @@ class AiParseServiceLocalProviderTest {
         assertTrue(capturedBody.get().contains("deepseek-chat"));
 
         // usage guard：成功路径
-        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.WRITING_GRADE, AiKeyMode.USER);
-        verify(aiUsageGuard).markSuccess(USER_ID, AiFeature.WRITING_GRADE, AiKeyMode.USER);
-        verify(aiUsageGuard, never()).markFailure(any(), any(), any(), any());
+        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.WRITING_GRADE, AiKeyMode.USER, "DEEPSEEK");
+        verify(aiUsageGuard).markSuccess(USER_ID, AiFeature.WRITING_GRADE, AiKeyMode.USER, "DEEPSEEK");
+        verify(aiUsageGuard, never()).markFailure(any(), any(), any(), any(), any());
     }
 }

@@ -31,11 +31,15 @@ import java.util.concurrent.atomic.AtomicInteger;
  *   <li>errorMessage 必须脱敏，禁止记录 API Key / Authorization / provider 原始 body。</li>
  * </ul>
  *
- * <p>方法签名保持稳定，调用点无需改动：</p>
+ * <p>方法签名：Phase 6B-2A 起新增 provider-aware overload，旧三参数方法保留兼容，
+ * 内部委托到新方法并传 {@code provider=null}。</p>
  * <ul>
- *   <li>{@link #checkBeforeCall(Long, AiFeature, AiKeyMode)} —— 调用前：BUILTIN 预扣 credits，USER 计数限流。</li>
- *   <li>{@link #markSuccess(Long, AiFeature, AiKeyMode)} —— 调用成功：写 SUCCESS 流水（BUILTIN 已预扣，此处不再扣费）。</li>
- *   <li>{@link #markFailure(Long, AiFeature, AiKeyMode, Exception)} —— 调用失败：BUILTIN 回滚 credits 并写 FAILED 流水。</li>
+ *   <li>{@link #checkBeforeCall(Long, AiFeature, AiKeyMode)} —— 旧签名，provider=null。</li>
+ *   <li>{@link #markSuccess(Long, AiFeature, AiKeyMode)} —— 旧签名，provider=null。</li>
+ *   <li>{@link #markFailure(Long, AiFeature, AiKeyMode, Exception)} —— 旧签名，provider=null。</li>
+ *   <li>{@link #checkBeforeCall(Long, AiFeature, AiKeyMode, String)} —— provider-aware：BUILTIN 预扣 credits，USER 计数限流。</li>
+ *   <li>{@link #markSuccess(Long, AiFeature, AiKeyMode, String)} —— provider-aware：写 SUCCESS 流水（BUILTIN 已预扣，此处不再扣费）。</li>
+ *   <li>{@link #markFailure(Long, AiFeature, AiKeyMode, String, Exception)} —— provider-aware：BUILTIN 回滚 credits 并写 FAILED 流水。</li>
  * </ul>
  *
  * <p>扣费模型说明：见 {@code docs/security-and-quota-plan.md} §6「调用前预扣 + 失败回滚」。</p>
@@ -57,7 +61,7 @@ public class AiUsageGuard {
     private final AiUsageQuotaMapper quotaMapper;
     private final AiUsageRecordMapper recordMapper;
 
-    // TODO(Phase 6B): replace in-memory limiter with Redis-based distributed rate limit.
+    // TODO(Phase 6B-2C): replace in-memory limiter with Redis-based distributed rate limit.
     private final ConcurrentHashMap<String, RateWindow> rateLimitMap = new ConcurrentHashMap<>();
 
     public AiUsageGuard(AiUsageQuotaMapper quotaMapper, AiUsageRecordMapper recordMapper) {
@@ -66,61 +70,93 @@ public class AiUsageGuard {
     }
 
     /**
-     * AI 调用前守卫。
+     * AI 调用前守卫（旧签名，provider=null）。
      *
-     * <ul>
-     *   <li>BUILTIN：原子预扣 credits，不足则抛业务异常并写 REJECTED 流水。</li>
-     *   <li>USER：内存 rate limit 计数，超限则抛业务异常并写 REJECTED 流水。</li>
-     * </ul>
+     * <p>保留兼容；新调用点应使用 {@link #checkBeforeCall(Long, AiFeature, AiKeyMode, String)}。</p>
      */
     public void checkBeforeCall(Long userId, AiFeature feature, AiKeyMode keyMode) {
+        checkBeforeCall(userId, feature, keyMode, null);
+    }
+
+    /**
+     * AI 调用前守卫（provider-aware）。
+     *
+     * <ul>
+     *   <li>BUILTIN：原子预扣 credits，不足则抛业务异常并写 REJECTED 流水（provider 一并写入）。</li>
+     *   <li>USER：内存 rate limit 计数，超限则抛业务异常并写 REJECTED 流水（provider 一并写入）。</li>
+     * </ul>
+     *
+     * @param provider provider 枚举名（如 {@code "DEEPSEEK"} / {@code "QWEN"} / {@code "MIMO"} /
+     *                 {@code "OPENAI_COMPATIBLE"}），可为 null
+     */
+    public void checkBeforeCall(Long userId, AiFeature feature, AiKeyMode keyMode, String provider) {
         validate(userId, feature, keyMode);
         if (keyMode == AiKeyMode.BUILTIN) {
-            checkBuiltin(userId, feature);
+            checkBuiltin(userId, feature, provider);
         } else {
-            checkUserRateLimit(userId, feature);
+            checkUserRateLimit(userId, feature, provider);
         }
     }
 
     /**
-     * AI 调用成功后回调。
+     * AI 调用成功后回调（旧签名，provider=null）。
+     *
+     * <p>保留兼容；新调用点应使用 {@link #markSuccess(Long, AiFeature, AiKeyMode, String)}。</p>
+     */
+    public void markSuccess(Long userId, AiFeature feature, AiKeyMode keyMode) {
+        markSuccess(userId, feature, keyMode, null);
+    }
+
+    /**
+     * AI 调用成功后回调（provider-aware）。
      *
      * <ul>
      *   <li>BUILTIN：credits 已在 {@link #checkBeforeCall} 预扣，此处仅写 SUCCESS 流水，cost = feature cost。</li>
      *   <li>USER：不消耗站点 credits，写 SUCCESS 流水，cost = 0。</li>
      * </ul>
      */
-    public void markSuccess(Long userId, AiFeature feature, AiKeyMode keyMode) {
+    public void markSuccess(Long userId, AiFeature feature, AiKeyMode keyMode, String provider) {
         validate(userId, feature, keyMode);
         int cost = keyMode == AiKeyMode.BUILTIN ? feature.getBuiltinCost() : 0;
-        insertRecord(userId, feature, keyMode, STATUS_SUCCESS, cost, null);
-        log.info("AiUsageGuard.markSuccess user={} feature={} keyMode={} cost={}", userId, feature, keyMode, cost);
+        insertRecord(userId, feature, keyMode, provider, STATUS_SUCCESS, cost, null);
+        log.info("AiUsageGuard.markSuccess user={} feature={} keyMode={} provider={} cost={}",
+                userId, feature, keyMode, provider, cost);
     }
 
     /**
-     * AI 调用失败后回调。
+     * AI 调用失败后回调（旧签名，provider=null）。
+     *
+     * <p>保留兼容；新调用点应使用 {@link #markFailure(Long, AiFeature, AiKeyMode, String, Exception)}。</p>
+     */
+    public void markFailure(Long userId, AiFeature feature, AiKeyMode keyMode, Exception ex) {
+        markFailure(userId, feature, keyMode, null, ex);
+    }
+
+    /**
+     * AI 调用失败后回调（provider-aware）。
      *
      * <ul>
      *   <li>BUILTIN：回滚预扣的 credits，写 FAILED 流水，cost = 0（失败不消耗 credits）。</li>
      *   <li>USER：写 FAILED 流水，cost = 0，不改 quota。</li>
      * </ul>
      *
-     * <p>异常 message 脱敏后写入流水 errorMessage 字段。</p>
+     * <p>异常 message 脱敏后写入流水 errorMessage 字段。provider 不参与 sanitize，不会被误删。</p>
      */
-    public void markFailure(Long userId, AiFeature feature, AiKeyMode keyMode, Exception ex) {
+    public void markFailure(Long userId, AiFeature feature, AiKeyMode keyMode, String provider, Exception ex) {
         validate(userId, feature, keyMode);
         String summary = summarize(ex);
         if (keyMode == AiKeyMode.BUILTIN) {
             refundBuiltin(userId, feature);
         }
-        insertRecord(userId, feature, keyMode, STATUS_FAILED, 0, summary);
-        log.info("AiUsageGuard.markFailure user={} feature={} keyMode={} ex={}", userId, feature, keyMode, summary);
+        insertRecord(userId, feature, keyMode, provider, STATUS_FAILED, 0, summary);
+        log.info("AiUsageGuard.markFailure user={} feature={} keyMode={} provider={} ex={}",
+                userId, feature, keyMode, provider, summary);
     }
 
     // ─── BUILTIN 模式 ───────────────────────────────────────────────────────────
 
     /** 预扣 credits：原子更新，credits_total - credits_used >= cost 才成功 */
-    private void checkBuiltin(Long userId, AiFeature feature) {
+    private void checkBuiltin(Long userId, AiFeature feature, String provider) {
         AiUsageQuota quota = getOrCreateCurrentQuota(userId);
         int cost = feature.getBuiltinCost();
         int updated = quotaMapper.update(null,
@@ -129,7 +165,7 @@ public class AiUsageGuard {
                         .apply("credits_total - credits_used >= {0}", cost)
                         .setSql("credits_used = credits_used + " + cost));
         if (updated == 0) {
-            insertRecord(userId, feature, AiKeyMode.BUILTIN, STATUS_REJECTED, 0, "INSUFFICIENT_CREDITS");
+            insertRecord(userId, feature, AiKeyMode.BUILTIN, provider, STATUS_REJECTED, 0, "INSUFFICIENT_CREDITS");
             throw new IllegalStateException("本周 AI 额度已用完，可切换自填 Key 模式");
         }
     }
@@ -190,21 +226,21 @@ public class AiUsageGuard {
     // ─── USER 模式限流 ─────────────────────────────────────────────────────────
     // 单机内存限流，多实例不共享。后续 Phase 6B 改为 Redis 分布式限流。
 
-    private void checkUserRateLimit(Long userId, AiFeature feature) {
+    private void checkUserRateLimit(Long userId, AiFeature feature, String provider) {
         String key = userId + ":" + feature.name();
         long minute = System.currentTimeMillis() / 60_000L;
         RateWindow window = rateLimitMap.compute(key, (k, existing) ->
                 (existing == null || existing.minute != minute) ? new RateWindow(minute) : existing);
         int count = window.count.incrementAndGet();
         if (count > USER_RATE_LIMIT_PER_MINUTE) {
-            insertRecord(userId, feature, AiKeyMode.USER, STATUS_REJECTED, 0, "RATE_LIMITED");
+            insertRecord(userId, feature, AiKeyMode.USER, provider, STATUS_REJECTED, 0, "RATE_LIMITED");
             throw new IllegalStateException("请求过于频繁，请稍后再试");
         }
     }
 
     // ─── 公共辅助 ───────────────────────────────────────────────────────────────
 
-    private void insertRecord(Long userId, AiFeature feature, AiKeyMode keyMode,
+    private void insertRecord(Long userId, AiFeature feature, AiKeyMode keyMode, String provider,
                               String status, int cost, String errorMessage) {
         AiUsageRecord record = new AiUsageRecord();
         record.setUserId(userId);
@@ -212,7 +248,8 @@ public class AiUsageGuard {
         record.setFeature(feature.name());
         record.setCost(cost);
         record.setKeyMode(keyMode.name());
-        record.setProvider(null); // 当前签名拿不到 provider，统一写 null；Phase 6B 再补
+        // provider 仅写枚举名或 null，不包含 baseUrl / model / API Key
+        record.setProvider(provider);
         record.setStatus(status);
         record.setErrorMessage(sanitize(errorMessage));
         recordMapper.insert(record);

@@ -194,7 +194,8 @@ public class AiParseService {
                 input.substring(0, Math.min(150, input.length())).replace("\n", "↵"));
 
         AiCredentials credentials = aiSettingsService.resolve(userId, AiTaskType.TEXT);
-        aiUsageGuard.checkBeforeCall(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode());
+        String provider = providerName(credentials);
+        aiUsageGuard.checkBeforeCall(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode(), provider);
         Map<String, Object> parsed;
         try {
             AiChatResponse response = openAiCompatibleClient.chat(AiChatRequest.builder()
@@ -210,9 +211,9 @@ public class AiParseService {
             // 只有 provider 调用成功 + JSON 解析成功才记 markSuccess，
             // 否则解析异常会进入 catch 走 markFailure，避免一次调用同时记成功与失败。
             parsed = objectMapper.readValue(response.getContent(), Map.class);
-            aiUsageGuard.markSuccess(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode());
+            aiUsageGuard.markSuccess(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode(), provider);
         } catch (Exception ex) {
-            aiUsageGuard.markFailure(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode(), ex);
+            aiUsageGuard.markFailure(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode(), provider, ex);
             throw aiCallFailed(ex);
         }
         // postProcess 不属于 provider 调用，放在 markSuccess 之后，
@@ -316,7 +317,8 @@ public class AiParseService {
         log.info("Calling AI multi-section (EXAM_PARSE), input length={}", input.length());
 
         AiCredentials credentials = aiSettingsService.resolve(userId, AiTaskType.TEXT);
-        aiUsageGuard.checkBeforeCall(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode());
+        String provider = providerName(credentials);
+        aiUsageGuard.checkBeforeCall(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode(), provider);
         Map<String, Object> result;
         try {
             AiChatResponse response = openAiCompatibleClient.chat(AiChatRequest.builder()
@@ -330,9 +332,9 @@ public class AiParseService {
                     .timeoutSeconds(120)
                     .build());
             result = objectMapper.readValue(response.getContent(), Map.class);
-            aiUsageGuard.markSuccess(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode());
+            aiUsageGuard.markSuccess(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode(), provider);
         } catch (Exception ex) {
-            aiUsageGuard.markFailure(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode(), ex);
+            aiUsageGuard.markFailure(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode(), provider, ex);
             throw aiCallFailed(ex);
         }
         // Normalise: if AI returned flat passages/questions instead of sections wrapper, wrap it
@@ -416,7 +418,8 @@ public class AiParseService {
                 + "- 若低于字数要求、偏题、论证不足、缺少 overview/比较、语法错误频繁，应明确反映在分数和反馈中";
 
         AiCredentials credentials = aiSettingsService.resolve(userId, AiTaskType.TEXT);
-        aiUsageGuard.checkBeforeCall(userId, AiFeature.WRITING_GRADE, credentials.getKeyMode());
+        String provider = providerName(credentials);
+        aiUsageGuard.checkBeforeCall(userId, AiFeature.WRITING_GRADE, credentials.getKeyMode(), provider);
         try {
             AiChatResponse response = openAiCompatibleClient.chat(AiChatRequest.builder()
                     .credentials(credentials)
@@ -431,10 +434,10 @@ public class AiParseService {
             // 只有 provider 调用成功 + 内容解析成功才记 markSuccess，
             // 否则解析异常会进入 catch 走 markFailure，避免一次调用同时记成功与失败。
             Map<String, Object> parsed = (Map<String, Object>) objectMapper.readValue(response.getContent(), Map.class);
-            aiUsageGuard.markSuccess(userId, AiFeature.WRITING_GRADE, credentials.getKeyMode());
+            aiUsageGuard.markSuccess(userId, AiFeature.WRITING_GRADE, credentials.getKeyMode(), provider);
             return parsed;
         } catch (Exception ex) {
-            aiUsageGuard.markFailure(userId, AiFeature.WRITING_GRADE, credentials.getKeyMode(), ex);
+            aiUsageGuard.markFailure(userId, AiFeature.WRITING_GRADE, credentials.getKeyMode(), provider, ex);
             throw aiCallFailed(ex);
         }
     }
@@ -493,7 +496,8 @@ public class AiParseService {
         String truncated = inputText.length() > 3000 ? inputText.substring(0, 3000) : inputText;
 
         AiCredentials credentials = aiSettingsService.resolve(userId, AiTaskType.TEXT);
-        aiUsageGuard.checkBeforeCall(userId, AiFeature.WORD_GENERATE, credentials.getKeyMode());
+        String provider = providerName(credentials);
+        aiUsageGuard.checkBeforeCall(userId, AiFeature.WORD_GENERATE, credentials.getKeyMode(), provider);
         try {
             AiChatResponse response = openAiCompatibleClient.chat(AiChatRequest.builder()
                     .credentials(credentials)
@@ -512,11 +516,11 @@ public class AiParseService {
             }
             // 只有 provider 调用成功 + JSON array 解析成功才记 markSuccess。
             List<Map<String, Object>> entries = objectMapper.readValue(content, List.class);
-            aiUsageGuard.markSuccess(userId, AiFeature.WORD_GENERATE, credentials.getKeyMode());
+            aiUsageGuard.markSuccess(userId, AiFeature.WORD_GENERATE, credentials.getKeyMode(), provider);
             log.info("Word generation parsed {} entries", entries.size());
             return entries;
         } catch (Exception ex) {
-            aiUsageGuard.markFailure(userId, AiFeature.WORD_GENERATE, credentials.getKeyMode(), ex);
+            aiUsageGuard.markFailure(userId, AiFeature.WORD_GENERATE, credentials.getKeyMode(), provider, ex);
             throw aiCallFailed(ex);
         }
     }
@@ -578,7 +582,8 @@ public class AiParseService {
         }
 
         AiCredentials credentials = aiSettingsService.resolve(userId, AiTaskType.TEXT);
-        aiUsageGuard.checkBeforeCall(userId, AiFeature.WRITING_GUIDANCE, credentials.getKeyMode());
+        String provider = providerName(credentials);
+        aiUsageGuard.checkBeforeCall(userId, AiFeature.WRITING_GUIDANCE, credentials.getKeyMode(), provider);
         try {
             AiChatResponse response = openAiCompatibleClient.chat(AiChatRequest.builder()
                     .credentials(credentials)
@@ -595,10 +600,10 @@ public class AiParseService {
                 content = content.replaceAll("^```[a-z]*\\n?", "").replaceAll("\\n?```$", "").trim();
             }
             Map<String, Object> parsed = objectMapper.readValue(content, Map.class);
-            aiUsageGuard.markSuccess(userId, AiFeature.WRITING_GUIDANCE, credentials.getKeyMode());
+            aiUsageGuard.markSuccess(userId, AiFeature.WRITING_GUIDANCE, credentials.getKeyMode(), provider);
             return parsed;
         } catch (Exception ex) {
-            aiUsageGuard.markFailure(userId, AiFeature.WRITING_GUIDANCE, credentials.getKeyMode(), ex);
+            aiUsageGuard.markFailure(userId, AiFeature.WRITING_GUIDANCE, credentials.getKeyMode(), provider, ex);
             throw aiCallFailed(ex);
         }
     }
@@ -744,7 +749,8 @@ public class AiParseService {
         log.info("Workflow Step1: sending {} chars to AI (EXAM_PARSE)", input.length());
 
         AiCredentials credentials = aiSettingsService.resolve(userId, AiTaskType.TEXT);
-        aiUsageGuard.checkBeforeCall(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode());
+        String provider = providerName(credentials);
+        aiUsageGuard.checkBeforeCall(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode(), provider);
         try {
             AiChatResponse response = openAiCompatibleClient.chat(AiChatRequest.builder()
                     .credentials(credentials)
@@ -757,11 +763,11 @@ public class AiParseService {
                     .timeoutSeconds(90)
                     .build());
             Map<String, Object> parsed = objectMapper.readValue(response.getContent(), Map.class);
-            aiUsageGuard.markSuccess(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode());
+            aiUsageGuard.markSuccess(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode(), provider);
             log.info("Workflow Step1: response length={}", response.getContent().length());
             return parsed;
         } catch (Exception ex) {
-            aiUsageGuard.markFailure(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode(), ex);
+            aiUsageGuard.markFailure(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode(), provider, ex);
             throw aiCallFailed(ex);
         }
     }
@@ -778,7 +784,8 @@ public class AiParseService {
         log.info("Workflow Step1A (passages): sending {} chars to AI (EXAM_PARSE)", input.length());
 
         AiCredentials credentials = aiSettingsService.resolve(userId, AiTaskType.TEXT);
-        aiUsageGuard.checkBeforeCall(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode());
+        String provider = providerName(credentials);
+        aiUsageGuard.checkBeforeCall(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode(), provider);
         try {
             AiChatResponse response = openAiCompatibleClient.chat(AiChatRequest.builder()
                     .credentials(credentials)
@@ -791,11 +798,11 @@ public class AiParseService {
                     .timeoutSeconds(90)
                     .build());
             Map<String, Object> parsed = objectMapper.readValue(response.getContent(), Map.class);
-            aiUsageGuard.markSuccess(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode());
+            aiUsageGuard.markSuccess(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode(), provider);
             log.info("Workflow Step1A: response length={}", response.getContent().length());
             return parsed;
         } catch (Exception ex) {
-            aiUsageGuard.markFailure(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode(), ex);
+            aiUsageGuard.markFailure(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode(), provider, ex);
             throw aiCallFailed(ex);
         }
     }
@@ -812,7 +819,8 @@ public class AiParseService {
         log.info("Workflow Step1B (questions): sending {} chars to AI (EXAM_PARSE)", input.length());
 
         AiCredentials credentials = aiSettingsService.resolve(userId, AiTaskType.TEXT);
-        aiUsageGuard.checkBeforeCall(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode());
+        String provider = providerName(credentials);
+        aiUsageGuard.checkBeforeCall(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode(), provider);
         try {
             AiChatResponse response = openAiCompatibleClient.chat(AiChatRequest.builder()
                     .credentials(credentials)
@@ -825,11 +833,11 @@ public class AiParseService {
                     .timeoutSeconds(90)
                     .build());
             Map<String, Object> parsed = objectMapper.readValue(response.getContent(), Map.class);
-            aiUsageGuard.markSuccess(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode());
+            aiUsageGuard.markSuccess(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode(), provider);
             log.info("Workflow Step1B: response length={}", response.getContent().length());
             return parsed;
         } catch (Exception ex) {
-            aiUsageGuard.markFailure(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode(), ex);
+            aiUsageGuard.markFailure(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode(), provider, ex);
             throw aiCallFailed(ex);
         }
     }
@@ -853,7 +861,8 @@ public class AiParseService {
         log.info("Workflow Step2: group {} – sending {} chars to AI (EXAM_PARSE)", range, userMsg.length());
 
         AiCredentials credentials = aiSettingsService.resolve(userId, AiTaskType.TEXT);
-        aiUsageGuard.checkBeforeCall(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode());
+        String provider = providerName(credentials);
+        aiUsageGuard.checkBeforeCall(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode(), provider);
         try {
             AiChatResponse response = openAiCompatibleClient.chat(AiChatRequest.builder()
                     .credentials(credentials)
@@ -866,11 +875,11 @@ public class AiParseService {
                     .timeoutSeconds(90)
                     .build());
             Map<String, Object> parsed = objectMapper.readValue(response.getContent(), Map.class);
-            aiUsageGuard.markSuccess(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode());
+            aiUsageGuard.markSuccess(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode(), provider);
             log.info("Workflow Step2: group {} – response length={}", range, response.getContent().length());
             return parsed;
         } catch (Exception ex) {
-            aiUsageGuard.markFailure(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode(), ex);
+            aiUsageGuard.markFailure(userId, AiFeature.EXAM_PARSE, credentials.getKeyMode(), provider, ex);
             throw aiCallFailed(ex);
         }
     }
@@ -894,7 +903,8 @@ public class AiParseService {
                 + "}";
 
         AiCredentials credentials = aiSettingsService.resolve(userId, AiTaskType.TEXT);
-        aiUsageGuard.checkBeforeCall(userId, AiFeature.TRANSLATE, credentials.getKeyMode());
+        String provider = providerName(credentials);
+        aiUsageGuard.checkBeforeCall(userId, AiFeature.TRANSLATE, credentials.getKeyMode(), provider);
         try {
             AiChatResponse response = openAiCompatibleClient.chat(AiChatRequest.builder()
                     .credentials(credentials)
@@ -912,10 +922,10 @@ public class AiParseService {
             }
             // 只有 provider 调用成功 + 内容非空 + JSON 解析成功才记 markSuccess。
             Map<String, Object> parsed = (Map<String, Object>) objectMapper.readValue(content, Map.class);
-            aiUsageGuard.markSuccess(userId, AiFeature.TRANSLATE, credentials.getKeyMode());
+            aiUsageGuard.markSuccess(userId, AiFeature.TRANSLATE, credentials.getKeyMode(), provider);
             return parsed;
         } catch (Exception ex) {
-            aiUsageGuard.markFailure(userId, AiFeature.TRANSLATE, credentials.getKeyMode(), ex);
+            aiUsageGuard.markFailure(userId, AiFeature.TRANSLATE, credentials.getKeyMode(), provider, ex);
             throw aiCallFailed(ex);
         }
     }
@@ -950,7 +960,8 @@ public class AiParseService {
         String userMsg = "【试卷上下文】\n" + ctx + "\n\n【用户问题】\n" + userQuestion.trim();
 
         AiCredentials credentials = aiSettingsService.resolve(userId, AiTaskType.TEXT);
-        aiUsageGuard.checkBeforeCall(userId, AiFeature.AI_CHAT, credentials.getKeyMode());
+        String provider = providerName(credentials);
+        aiUsageGuard.checkBeforeCall(userId, AiFeature.AI_CHAT, credentials.getKeyMode(), provider);
         try {
             AiChatResponse response = openAiCompatibleClient.chat(AiChatRequest.builder()
                     .credentials(credentials)
@@ -962,10 +973,10 @@ public class AiParseService {
                     .jsonMode(false)
                     .timeoutSeconds(60)
                     .build());
-            aiUsageGuard.markSuccess(userId, AiFeature.AI_CHAT, credentials.getKeyMode());
+            aiUsageGuard.markSuccess(userId, AiFeature.AI_CHAT, credentials.getKeyMode(), provider);
             return response.getContent();
         } catch (Exception ex) {
-            aiUsageGuard.markFailure(userId, AiFeature.AI_CHAT, credentials.getKeyMode(), ex);
+            aiUsageGuard.markFailure(userId, AiFeature.AI_CHAT, credentials.getKeyMode(), provider, ex);
             throw aiCallFailed(ex);
         }
     }
@@ -977,6 +988,11 @@ public class AiParseService {
     private RuntimeException aiCallFailed(Exception ex) {
         log.warn("AI 调用失败: {}", ex.getClass().getSimpleName());
         return new RuntimeException("AI 服务暂时不可用，请稍后重试");
+    }
+
+    /** 仅返回 provider 枚举名或 null，避免在 usage record 中暴露 baseUrl / model / API Key */
+    private static String providerName(AiCredentials credentials) {
+        return credentials.getProvider() == null ? null : credentials.getProvider().name();
     }
 
     /**
@@ -1483,7 +1499,8 @@ public class AiParseService {
             log.warn("extractHeadingsWithAi: resolve failed: {}", e.getClass().getSimpleName());
             return Map.of();
         }
-        aiUsageGuard.checkBeforeCall(userId, AiFeature.HEADING_EXTRACT, credentials.getKeyMode());
+        String provider = providerName(credentials);
+        aiUsageGuard.checkBeforeCall(userId, AiFeature.HEADING_EXTRACT, credentials.getKeyMode(), provider);
         try {
             String input = rawText.length() > TEXT_MAX_CHARS
                     ? rawText.substring(0, TEXT_MAX_CHARS) : rawText;
@@ -1501,12 +1518,12 @@ public class AiParseService {
             Map<String, String> result = objectMapper.readValue(response.getContent(),
                     objectMapper.getTypeFactory().constructMapType(LinkedHashMap.class, String.class, String.class));
             log.info("extractHeadingsWithAi: extracted {} headings", result.size());
-            aiUsageGuard.markSuccess(userId, AiFeature.HEADING_EXTRACT, credentials.getKeyMode());
+            aiUsageGuard.markSuccess(userId, AiFeature.HEADING_EXTRACT, credentials.getKeyMode(), provider);
             return result;
         } catch (Exception ex) {
             // 仅记异常类名，避免把 provider body（即使已被脱敏）写入日志
             log.warn("extractHeadingsWithAi failed: {}", ex.getClass().getSimpleName());
-            aiUsageGuard.markFailure(userId, AiFeature.HEADING_EXTRACT, credentials.getKeyMode(), ex);
+            aiUsageGuard.markFailure(userId, AiFeature.HEADING_EXTRACT, credentials.getKeyMode(), provider, ex);
             return Map.of();
         }
     }

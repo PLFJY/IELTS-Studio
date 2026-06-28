@@ -108,9 +108,9 @@ class AiParseServiceWordGenerationProviderTest {
 
         assertEquals(1, result.size());
         assertEquals("inspection", result.get(0).get("word"));
-        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.WORD_GENERATE, AiKeyMode.USER);
-        verify(aiUsageGuard).markSuccess(USER_ID, AiFeature.WORD_GENERATE, AiKeyMode.USER);
-        verify(aiUsageGuard, never()).markFailure(any(), any(), any(), any());
+        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.WORD_GENERATE, AiKeyMode.USER, "DEEPSEEK");
+        verify(aiUsageGuard).markSuccess(USER_ID, AiFeature.WORD_GENERATE, AiKeyMode.USER, "DEEPSEEK");
+        verify(aiUsageGuard, never()).markFailure(any(), any(), any(), any(), any());
     }
 
     // ── 2. 返回非法 JSON 时 markFailure，不 markSuccess ────────────────────────
@@ -124,9 +124,9 @@ class AiParseServiceWordGenerationProviderTest {
         RuntimeException ex = assertThrows(RuntimeException.class,
                 () -> service.generateWordEntries(USER_ID, "inspection"));
 
-        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.WORD_GENERATE, AiKeyMode.BUILTIN);
-        verify(aiUsageGuard).markFailure(eq(USER_ID), eq(AiFeature.WORD_GENERATE), eq(AiKeyMode.BUILTIN), any());
-        verify(aiUsageGuard, never()).markSuccess(any(), any(), any());
+        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.WORD_GENERATE, AiKeyMode.BUILTIN, "DEEPSEEK");
+        verify(aiUsageGuard).markFailure(eq(USER_ID), eq(AiFeature.WORD_GENERATE), eq(AiKeyMode.BUILTIN), eq("DEEPSEEK"), any());
+        verify(aiUsageGuard, never()).markSuccess(any(), any(), any(), any());
         // 异常 message 不含 API Key
         assertFalse(ex.getMessage().contains(USER_KEY));
         assertFalse(ex.getMessage().contains("sk-"));
@@ -145,8 +145,8 @@ class AiParseServiceWordGenerationProviderTest {
 
         // 输入校验失败时不应进入 provider 调用链
         verify(aiSettingsService, never()).resolve(any(), any());
-        verify(aiUsageGuard, never()).markSuccess(any(), any(), any());
-        verify(aiUsageGuard, never()).markFailure(any(), any(), any(), any());
+        verify(aiUsageGuard, never()).markSuccess(any(), any(), any(), any());
+        verify(aiUsageGuard, never()).markFailure(any(), any(), any(), any(), any());
     }
 
     // ── 4. 超长输入截断到 3000 字符 ─────────────────────────────────────────────

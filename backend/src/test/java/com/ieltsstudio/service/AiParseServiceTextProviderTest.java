@@ -99,9 +99,9 @@ class AiParseServiceTextProviderTest {
                 "This is a test essay with enough words.", 250);
 
         assertEquals(7.0, ((Number) result.get("band")).doubleValue());
-        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.WRITING_GRADE, AiKeyMode.USER);
-        verify(aiUsageGuard).markSuccess(USER_ID, AiFeature.WRITING_GRADE, AiKeyMode.USER);
-        verify(aiUsageGuard, never()).markFailure(any(), any(), any(), any());
+        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.WRITING_GRADE, AiKeyMode.USER, "DEEPSEEK");
+        verify(aiUsageGuard).markSuccess(USER_ID, AiFeature.WRITING_GRADE, AiKeyMode.USER, "DEEPSEEK");
+        verify(aiUsageGuard, never()).markFailure(any(), any(), any(), any(), any());
     }
 
     // ── 2. 翻译走 BUILTIN credentials 并 markSuccess ───────────────────────────
@@ -115,9 +115,9 @@ class AiParseServiceTextProviderTest {
         Map<String, Object> result = service.translateWithContext(USER_ID, "some passage", "selected text");
 
         assertEquals("测试翻译", result.get("translation"));
-        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.TRANSLATE, AiKeyMode.BUILTIN);
-        verify(aiUsageGuard).markSuccess(USER_ID, AiFeature.TRANSLATE, AiKeyMode.BUILTIN);
-        verify(aiUsageGuard, never()).markFailure(any(), any(), any(), any());
+        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.TRANSLATE, AiKeyMode.BUILTIN, "DEEPSEEK");
+        verify(aiUsageGuard).markSuccess(USER_ID, AiFeature.TRANSLATE, AiKeyMode.BUILTIN, "DEEPSEEK");
+        verify(aiUsageGuard, never()).markFailure(any(), any(), any(), any(), any());
     }
 
     // ── 3. AI Chat 失败时 markFailure，异常 message 不含 API Key ────────────────
@@ -132,9 +132,9 @@ class AiParseServiceTextProviderTest {
         RuntimeException ex = assertThrows(RuntimeException.class,
                 () -> service.chatWithContext(USER_ID, "ctx", "why?" + USER_KEY));
 
-        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.AI_CHAT, AiKeyMode.USER);
-        verify(aiUsageGuard).markFailure(eq(USER_ID), eq(AiFeature.AI_CHAT), eq(AiKeyMode.USER), any());
-        verify(aiUsageGuard, never()).markSuccess(any(), any(), any());
+        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.AI_CHAT, AiKeyMode.USER, "DEEPSEEK");
+        verify(aiUsageGuard).markFailure(eq(USER_ID), eq(AiFeature.AI_CHAT), eq(AiKeyMode.USER), eq("DEEPSEEK"), any());
+        verify(aiUsageGuard, never()).markSuccess(any(), any(), any(), any());
         // 异常 message 不含 API Key
         assertFalse(ex.getMessage().contains(USER_KEY));
         assertFalse(ex.getMessage().contains("sk-"));
@@ -155,9 +155,9 @@ class AiParseServiceTextProviderTest {
         RuntimeException ex = assertThrows(RuntimeException.class,
                 () -> service.gradeWriting(USER_ID, "prompt", "This is a valid essay content.", 250));
 
-        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.WRITING_GRADE, AiKeyMode.USER);
-        verify(aiUsageGuard).markFailure(eq(USER_ID), eq(AiFeature.WRITING_GRADE), eq(AiKeyMode.USER), any());
-        verify(aiUsageGuard, never()).markSuccess(any(), any(), any());
+        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.WRITING_GRADE, AiKeyMode.USER, "DEEPSEEK");
+        verify(aiUsageGuard).markFailure(eq(USER_ID), eq(AiFeature.WRITING_GRADE), eq(AiKeyMode.USER), eq("DEEPSEEK"), any());
+        verify(aiUsageGuard, never()).markSuccess(any(), any(), any(), any());
         // 异常 message 不含 API Key
         assertFalse(ex.getMessage().contains(USER_KEY));
         assertFalse(ex.getMessage().contains("sk-"));
@@ -172,9 +172,9 @@ class AiParseServiceTextProviderTest {
         assertThrows(RuntimeException.class,
                 () -> service.translateWithContext(USER_ID, "passage", "selected text"));
 
-        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.TRANSLATE, AiKeyMode.USER);
-        verify(aiUsageGuard).markFailure(eq(USER_ID), eq(AiFeature.TRANSLATE), eq(AiKeyMode.USER), any());
-        verify(aiUsageGuard, never()).markSuccess(any(), any(), any());
+        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.TRANSLATE, AiKeyMode.USER, "DEEPSEEK");
+        verify(aiUsageGuard).markFailure(eq(USER_ID), eq(AiFeature.TRANSLATE), eq(AiKeyMode.USER), eq("DEEPSEEK"), any());
+        verify(aiUsageGuard, never()).markSuccess(any(), any(), any(), any());
     }
 
     @Test
@@ -186,8 +186,8 @@ class AiParseServiceTextProviderTest {
         assertThrows(RuntimeException.class,
                 () -> service.translateWithContext(USER_ID, "passage", "selected text"));
 
-        verify(aiUsageGuard).markFailure(eq(USER_ID), eq(AiFeature.TRANSLATE), eq(AiKeyMode.USER), any());
-        verify(aiUsageGuard, never()).markSuccess(any(), any(), any());
+        verify(aiUsageGuard).markFailure(eq(USER_ID), eq(AiFeature.TRANSLATE), eq(AiKeyMode.USER), eq("DEEPSEEK"), any());
+        verify(aiUsageGuard, never()).markSuccess(any(), any(), any(), any());
     }
 
     // ── 4. 输入校验 ────────────────────────────────────────────────────────────
@@ -253,7 +253,7 @@ class AiParseServiceTextProviderTest {
         assertThrows(IllegalStateException.class,
                 () -> service.gradeWriting(USER_ID, "prompt", "essay content here", 250));
 
-        verify(aiUsageGuard, never()).markFailure(any(), any(), any(), any());
-        verify(aiUsageGuard, never()).markSuccess(any(), any(), any());
+        verify(aiUsageGuard, never()).markFailure(any(), any(), any(), any(), any());
+        verify(aiUsageGuard, never()).markSuccess(any(), any(), any(), any());
     }
 }

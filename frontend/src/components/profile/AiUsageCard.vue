@@ -106,6 +106,11 @@
               <el-tag v-else size="small" type="warning">自填</el-tag>
             </template>
           </el-table-column>
+          <el-table-column label="Provider" width="140">
+            <template #default="{ row }">
+              <span class="cell-provider">{{ providerLabel(row.provider) }}</span>
+            </template>
+          </el-table-column>
           <el-table-column label="cost" width="70" align="center">
             <template #default="{ row }">
               <span class="cell-cost">{{ row.cost }}</span>
@@ -202,9 +207,22 @@ const FEATURE_LABELS = {
   HEADING_EXTRACT: '标题列表抽取',
 }
 
+/** provider 中文映射（与后端 AiProviderType 枚举对齐） */
+const PROVIDER_LABELS = {
+  DEEPSEEK: 'DeepSeek',
+  QWEN: 'Qwen',
+  MIMO: 'MiMO',
+  OPENAI_COMPATIBLE: 'OpenAI-compatible',
+}
+
 function featureLabel(feature) {
   if (!feature) return ''
   return FEATURE_LABELS[feature] || feature
+}
+
+function providerLabel(provider) {
+  if (!provider) return '-'
+  return PROVIDER_LABELS[provider] || provider
 }
 
 function formatDateTime(iso) {
@@ -383,6 +401,11 @@ defineExpose({ refresh: loadData })
 .cell-cost {
   font-weight: 600;
   color: var(--text-primary);
+}
+
+.cell-provider {
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 
 .empty-records {

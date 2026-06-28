@@ -120,9 +120,9 @@ class QwenAiParseServiceProviderTest {
 
         assertEquals(List.of("p"), result.get("passages"));
         assertEquals(1, ((List<?>) result.get("questions")).size());
-        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.EXAM_PRECISE_PARSE, AiKeyMode.USER);
-        verify(aiUsageGuard).markSuccess(USER_ID, AiFeature.EXAM_PRECISE_PARSE, AiKeyMode.USER);
-        verify(aiUsageGuard, never()).markFailure(any(), any(), any(), any());
+        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.EXAM_PRECISE_PARSE, AiKeyMode.USER, "QWEN");
+        verify(aiUsageGuard).markSuccess(USER_ID, AiFeature.EXAM_PRECISE_PARSE, AiKeyMode.USER, "QWEN");
+        verify(aiUsageGuard, never()).markFailure(any(), any(), any(), any(), any());
 
         // 校验发给 provider 的请求形态
         ArgumentCaptor<AiChatRequest> captor = ArgumentCaptor.forClass(AiChatRequest.class);
@@ -159,7 +159,7 @@ class QwenAiParseServiceProviderTest {
         AiChatRequest sent = captor.getValue();
         assertEquals(AiProviderType.MIMO, sent.getCredentials().getProvider());
         assertEquals("max_completion_tokens", sent.getCredentials().getTokenField());
-        verify(aiUsageGuard).markSuccess(USER_ID, AiFeature.EXAM_PRECISE_PARSE, AiKeyMode.USER);
+        verify(aiUsageGuard).markSuccess(USER_ID, AiFeature.EXAM_PRECISE_PARSE, AiKeyMode.USER, "MIMO");
     }
 
     // ── 3. parseImages 返回非法 JSON 时 markFailure，异常不含 Key ───────────────
@@ -173,9 +173,9 @@ class QwenAiParseServiceProviderTest {
         RuntimeException ex = assertThrows(RuntimeException.class,
                 () -> service.parseImages(USER_ID, List.of(FAKE_PNG_BYTES), List.of("a.png"), "reading"));
 
-        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.EXAM_PRECISE_PARSE, AiKeyMode.USER);
-        verify(aiUsageGuard).markFailure(eq(USER_ID), eq(AiFeature.EXAM_PRECISE_PARSE), eq(AiKeyMode.USER), any());
-        verify(aiUsageGuard, never()).markSuccess(any(), any(), any());
+        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.EXAM_PRECISE_PARSE, AiKeyMode.USER, "QWEN");
+        verify(aiUsageGuard).markFailure(eq(USER_ID), eq(AiFeature.EXAM_PRECISE_PARSE), eq(AiKeyMode.USER), eq("QWEN"), any());
+        verify(aiUsageGuard, never()).markSuccess(any(), any(), any(), any());
         assertFalse(ex.getMessage().contains(USER_KEY));
         assertFalse(ex.getMessage().contains("sk-"));
         assertTrue(ex.getMessage().contains("AI 精准解析暂时不可用"));
@@ -193,9 +193,9 @@ class QwenAiParseServiceProviderTest {
         RuntimeException ex = assertThrows(RuntimeException.class,
                 () -> service.parseImages(USER_ID, List.of(FAKE_PNG_BYTES), List.of("a.png"), "reading"));
 
-        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.EXAM_PRECISE_PARSE, AiKeyMode.USER);
-        verify(aiUsageGuard).markFailure(eq(USER_ID), eq(AiFeature.EXAM_PRECISE_PARSE), eq(AiKeyMode.USER), any());
-        verify(aiUsageGuard, never()).markSuccess(any(), any(), any());
+        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.EXAM_PRECISE_PARSE, AiKeyMode.USER, "QWEN");
+        verify(aiUsageGuard).markFailure(eq(USER_ID), eq(AiFeature.EXAM_PRECISE_PARSE), eq(AiKeyMode.USER), eq("QWEN"), any());
+        verify(aiUsageGuard, never()).markSuccess(any(), any(), any(), any());
         assertFalse(ex.getMessage().contains(USER_KEY));
         assertFalse(ex.getMessage().contains("sk-"));
         assertTrue(ex.getMessage().contains("AI 精准解析暂时不可用"));

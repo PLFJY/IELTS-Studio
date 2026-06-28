@@ -99,9 +99,9 @@ class AiParseServiceExamParseProviderTest {
 
         assertEquals(List.of("p"), result.get("passages"));
         assertEquals(1, ((List<?>) result.get("questions")).size());
-        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.EXAM_PARSE, AiKeyMode.USER);
-        verify(aiUsageGuard).markSuccess(USER_ID, AiFeature.EXAM_PARSE, AiKeyMode.USER);
-        verify(aiUsageGuard, never()).markFailure(any(), any(), any(), any());
+        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.EXAM_PARSE, AiKeyMode.USER, "DEEPSEEK");
+        verify(aiUsageGuard).markSuccess(USER_ID, AiFeature.EXAM_PARSE, AiKeyMode.USER, "DEEPSEEK");
+        verify(aiUsageGuard, never()).markFailure(any(), any(), any(), any(), any());
     }
 
     // ── 2. parseWithAi 返回非法 JSON 时 markFailure，异常不含 Key ───────────────
@@ -115,9 +115,9 @@ class AiParseServiceExamParseProviderTest {
         RuntimeException ex = assertThrows(RuntimeException.class,
                 () -> service.parseWithAi(USER_ID, VALID_RAW_TEXT));
 
-        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.EXAM_PARSE, AiKeyMode.USER);
-        verify(aiUsageGuard).markFailure(eq(USER_ID), eq(AiFeature.EXAM_PARSE), eq(AiKeyMode.USER), any());
-        verify(aiUsageGuard, never()).markSuccess(any(), any(), any());
+        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.EXAM_PARSE, AiKeyMode.USER, "DEEPSEEK");
+        verify(aiUsageGuard).markFailure(eq(USER_ID), eq(AiFeature.EXAM_PARSE), eq(AiKeyMode.USER), eq("DEEPSEEK"), any());
+        verify(aiUsageGuard, never()).markSuccess(any(), any(), any(), any());
         assertFalse(ex.getMessage().contains(USER_KEY));
         assertFalse(ex.getMessage().contains("sk-"));
         assertTrue(ex.getMessage().contains("AI 服务暂时不可用"));
@@ -136,9 +136,9 @@ class AiParseServiceExamParseProviderTest {
         Map<String, Object> result = service.workflowStep1B(USER_ID, VALID_RAW_TEXT);
 
         assertEquals(1, ((List<?>) result.get("questionGroups")).size());
-        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.EXAM_PARSE, AiKeyMode.USER);
-        verify(aiUsageGuard).markSuccess(USER_ID, AiFeature.EXAM_PARSE, AiKeyMode.USER);
-        verify(aiUsageGuard, never()).markFailure(any(), any(), any(), any());
+        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.EXAM_PARSE, AiKeyMode.USER, "DEEPSEEK");
+        verify(aiUsageGuard).markSuccess(USER_ID, AiFeature.EXAM_PARSE, AiKeyMode.USER, "DEEPSEEK");
+        verify(aiUsageGuard, never()).markFailure(any(), any(), any(), any(), any());
     }
 
     // ── 4. workflowStep2 client 抛异常（含测试 key）时 markFailure，异常不含 key ─
@@ -158,9 +158,9 @@ class AiParseServiceExamParseProviderTest {
         RuntimeException ex = assertThrows(RuntimeException.class,
                 () -> service.workflowStep2(USER_ID, "passage text " + USER_KEY, group));
 
-        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.EXAM_PARSE, AiKeyMode.USER);
-        verify(aiUsageGuard).markFailure(eq(USER_ID), eq(AiFeature.EXAM_PARSE), eq(AiKeyMode.USER), any());
-        verify(aiUsageGuard, never()).markSuccess(any(), any(), any());
+        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.EXAM_PARSE, AiKeyMode.USER, "DEEPSEEK");
+        verify(aiUsageGuard).markFailure(eq(USER_ID), eq(AiFeature.EXAM_PARSE), eq(AiKeyMode.USER), eq("DEEPSEEK"), any());
+        verify(aiUsageGuard, never()).markSuccess(any(), any(), any(), any());
         assertFalse(ex.getMessage().contains(USER_KEY));
         assertFalse(ex.getMessage().contains("sk-"));
         assertTrue(ex.getMessage().contains("AI 服务暂时不可用"));
@@ -178,8 +178,8 @@ class AiParseServiceExamParseProviderTest {
         verify(aiSettingsService, never()).resolve(any(), any());
         verify(openAiCompatibleClient, never()).chat(any(AiChatRequest.class));
         verify(aiUsageGuard, never()).checkBeforeCall(any(), any(), any());
-        verify(aiUsageGuard, never()).markSuccess(any(), any(), any());
-        verify(aiUsageGuard, never()).markFailure(any(), any(), any(), any());
+        verify(aiUsageGuard, never()).markSuccess(any(), any(), any(), any());
+        verify(aiUsageGuard, never()).markFailure(any(), any(), any(), any(), any());
         assertTrue(ex.getMessage().contains("PDF文字提取内容过少"));
     }
 

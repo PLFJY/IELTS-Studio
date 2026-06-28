@@ -121,7 +121,7 @@ IELTS Studio 的 AI 接口会真实调用第三方 provider（DeepSeek / Qwen / 
 - **USER 模式限流**：本阶段使用**单机内存**滑动窗口（`ConcurrentHashMap` + 按分钟计数），每用户每 feature 每分钟 20 次，多实例不共享。
 - **流水状态**：`SUCCESS` / `FAILED` / `REJECTED` 三种，`REJECTED` 用于额度不足（BUILTIN）或限流触发（USER），cost 均为 0。
 - **errorMessage 脱敏**：移除 `Authorization: Bearer xxx` / `Bearer xxx` / `sk-xxx`，截断到 500 字符（对齐 `error_message VARCHAR(500)`）。
-- **待 Phase 6B-2**：Redis 分布式限流、provider 字段统计、管理端统计。
+- **待 Phase 6B-2B/2C**：管理端 usage 统计接口与面板（6B-2B）、Redis 分布式限流（6B-2C）。Provider 字段记录已在 Phase 6B-2A 落地（见 §6.3）。
 
 ### 6.2 Phase 6B-1：额度查询与展示
 
@@ -132,3 +132,12 @@ IELTS Studio 的 AI 接口会真实调用第三方 provider（DeepSeek / Qwen / 
 - errorMessage 已由 `AiUsageGuard` 在写入时脱敏，查询接口不再加工。
 - USER 模式不消耗站点 credits，但仍展示最近 usage records 与限流说明；视觉上弱化站点额度参考，避免用户误以为 USER 模式也会消耗 credits。
 - 前端 `AiUsageCard.vue` 集成到 `ProfileView.vue` 的 `AiSettingsCard` 之后；不写入本地存储，不打印 payload。
+
+### 6.3 Phase 6B-2A：Provider 记录
+
+- `ai_usage_records.provider` 字段记录本次调用使用的 provider 枚举名，例如 `DEEPSEEK` / `QWEN` / `MIMO` / `OPENAI_COMPATIBLE`；当 provider 不可知时为 null。
+- provider 字段**不包含** baseUrl、model、API Key 或 masked key；只写枚举名或 null，是结构安全的可统计维度。
+- BUILTIN credits 不足（REJECTED）与 USER rate limit 触发（REJECTED）的流水也写 provider，方便后续统计拒绝来源。
+- `AiUsageGuard` 旧三参数方法（`checkBeforeCall(userId, feature, keyMode)` / `markSuccess(...)` / `markFailure(..., ex)`）保留兼容，内部委托到 provider-aware overload 并传 `provider=null`；主 AI 调用点（`AiParseService` / `ClozeService` / `QwenAiParseService`）已全部迁移至新 overload。
+- 用户中心 `AiUsageCard.vue` 最近记录表新增 Provider 列，枚举名映射为展示名（`DEEPSEEK→DeepSeek` / `QWEN→Qwen` / `MIMO→MiMO` / `OPENAI_COMPATIBLE→OpenAI-compatible` / null→`-`），未知 provider 原样展示枚举名。
+- 该字段用于后续管理端统计与 provider 成功率分析，本阶段不做统计接口。

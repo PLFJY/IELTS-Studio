@@ -260,4 +260,114 @@ class AiUsageGuardTest {
         assertThrows(IllegalArgumentException.class,
                 () -> guard.checkBeforeCall(USER_ID, AiFeature.WRITING_GRADE, null));
     }
+
+    // ─── 9. Phase 6B-2A：provider-aware overload 写入 provider（REJECTED-BUILTIN） ─
+
+    @Test
+    void builtinRejectedRecordShouldIncludeProvider() {
+        AiUsageQuota quota = new AiUsageQuota();
+        quota.setId(100L);
+        quota.setUserId(USER_ID);
+        quota.setCreditsTotal(30);
+        quota.setCreditsUsed(30); // 已用完
+        when(quotaMapper.selectOne(any())).thenReturn(quota);
+        when(quotaMapper.update(any(), any())).thenReturn(0); // 预扣失败
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+                () -> guard.checkBeforeCall(USER_ID, AiFeature.WRITING_GRADE, AiKeyMode.BUILTIN, "DEEPSEEK"));
+        assertTrue(ex.getMessage().contains("额度已用完"));
+
+        ArgumentCaptor<AiUsageRecord> recCaptor = ArgumentCaptor.forClass(AiUsageRecord.class);
+        verify(recordMapper).insert(recCaptor.capture());
+        AiUsageRecord rec = recCaptor.getValue();
+        assertEquals("REJECTED", rec.getStatus());
+        assertEquals("DEEPSEEK", rec.getProvider(), "REJECTED record 必须写入 provider");
+        assertEquals("BUILTIN", rec.getKeyMode());
+        assertEquals("WRITING_GRADE", rec.getFeature());
+        assertEquals("INSUFFICIENT_CREDITS", rec.getErrorMessage());
+    }
+
+    // ─── 10. Phase 6B-2A：provider-aware overload 写入 provider（REJECTED-USER） ──
+
+    @Test
+    void userRejectedRecordShouldIncludeProvider() {
+        // 前 20 次通过
+        for (int i = 0; i < 20; i++) {
+            guard.checkBeforeCall(USER_ID, AiFeature.AI_CHAT, AiKeyMode.USER, "QWEN");
+        }
+        // 第 21 次被限流
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+                () -> guard.checkBeforeCall(USER_ID, AiFeature.AI_CHAT, AiKeyMode.USER, "QWEN"));
+        assertTrue(ex.getMessage().contains("请求过于频繁"));
+
+        // 仅第 21 次写了一条 REJECTED 流水
+        ArgumentCaptor<AiUsageRecord> recCaptor = ArgumentCaptor.forClass(AiUsageRecord.class);
+        verify(recordMapper).insert(recCaptor.capture());
+        AiUsageRecord rec = recCaptor.getValue();
+        assertEquals("REJECTED", rec.getStatus());
+        assertEquals("QWEN", rec.getProvider(), "USER rate-limited REJECTED record 必须写入 provider");
+        assertEquals("USER", rec.getKeyMode());
+        assertEquals("AI_CHAT", rec.getFeature());
+        assertEquals("RATE_LIMITED", rec.getErrorMessage());
+    }
+
+    // ─── 11. Phase 6B-2A：markSuccess provider-aware 写入 provider ──────────────
+
+    @Test
+    void markSuccessShouldWriteProvider() {
+        guard.markSuccess(USER_ID, AiFeature.TRANSLATE, AiKeyMode.BUILTIN, "MIMO");
+
+        ArgumentCaptor<AiUsageRecord> recCaptor = ArgumentCaptor.forClass(AiUsageRecord.class);
+        verify(recordMapper).insert(recCaptor.capture());
+        AiUsageRecord rec = recCaptor.getValue();
+        assertEquals("SUCCESS", rec.getStatus());
+        assertEquals("MIMO", rec.getProvider(), "markSuccess 必须写入 provider");
+        assertEquals("BUILTIN", rec.getKeyMode());
+        assertEquals("TRANSLATE", rec.getFeature());
+        assertEquals(AiFeature.TRANSLATE.getBuiltinCost(), rec.getCost());
+    }
+
+    // ─── 12. Phase 6B-2A：markFailure provider-aware 写入 provider ──────────────
+
+    @Test
+    void markFailureShouldWriteProvider() {
+        Exception ex = new RuntimeException("connection timeout");
+
+        guard.markFailure(USER_ID, AiFeature.EXAM_PRECISE_PARSE, AiKeyMode.BUILTIN, "OPENAI_COMPATIBLE", ex);
+
+        ArgumentCaptor<AiUsageRecord> recCaptor = ArgumentCaptor.forClass(AiUsageRecord.class);
+        verify(recordMapper).insert(recCaptor.capture());
+        AiUsageRecord rec = recCaptor.getValue();
+        assertEquals("FAILED", rec.getStatus());
+        assertEquals("OPENAI_COMPATIBLE", rec.getProvider(), "markFailure 必须写入 provider");
+        assertEquals("BUILTIN", rec.getKeyMode());
+        assertEquals("EXAM_PRECISE_PARSE", rec.getFeature());
+        assertEquals(0, rec.getCost());
+        assertNotNull(rec.getErrorMessage());
+        // provider 独立于 errorMessage，不被 sanitize 影响
+        assertEquals("OPENAI_COMPATIBLE", rec.getProvider());
+    }
+
+    // ─── 13. Phase 6B-2A：旧三参数方法仍可用，provider=null ────────────────────
+
+    @Test
+    void legacyMethodsShouldStillWriteNullProvider() {
+        // 旧 checkBeforeCall + markSuccess（不传 provider）
+        guard.checkBeforeCall(USER_ID, AiFeature.TRANSLATE, AiKeyMode.USER);
+        guard.markSuccess(USER_ID, AiFeature.TRANSLATE, AiKeyMode.USER);
+
+        ArgumentCaptor<AiUsageRecord> recCaptor = ArgumentCaptor.forClass(AiUsageRecord.class);
+        verify(recordMapper).insert(recCaptor.capture());
+        AiUsageRecord rec = recCaptor.getValue();
+        assertEquals("SUCCESS", rec.getStatus());
+        assertNull(rec.getProvider(), "旧三参数方法应写入 provider=null");
+
+        // 旧 markFailure（不传 provider）
+        guard.markFailure(USER_ID, AiFeature.AI_CHAT, AiKeyMode.USER, new RuntimeException("err"));
+        ArgumentCaptor<AiUsageRecord> failCaptor = ArgumentCaptor.forClass(AiUsageRecord.class);
+        verify(recordMapper, times(2)).insert(failCaptor.capture());
+        AiUsageRecord failRec = failCaptor.getAllValues().get(1);
+        assertEquals("FAILED", failRec.getStatus());
+        assertNull(failRec.getProvider(), "旧 markFailure 也应写入 provider=null");
+    }
 }

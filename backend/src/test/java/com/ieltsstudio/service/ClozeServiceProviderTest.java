@@ -121,9 +121,9 @@ class ClozeServiceProviderTest {
                 List.of("sample"), List.of("样本"), "medium");
 
         assertEquals("Test Passage", result.get("title"));
-        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.CLOZE_GENERATE, AiKeyMode.USER);
-        verify(aiUsageGuard).markSuccess(USER_ID, AiFeature.CLOZE_GENERATE, AiKeyMode.USER);
-        verify(aiUsageGuard, never()).markFailure(any(), any(), any(), any());
+        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.CLOZE_GENERATE, AiKeyMode.USER, "DEEPSEEK");
+        verify(aiUsageGuard).markSuccess(USER_ID, AiFeature.CLOZE_GENERATE, AiKeyMode.USER, "DEEPSEEK");
+        verify(aiUsageGuard, never()).markFailure(any(), any(), any(), any(), any());
     }
 
     // ── 2. generate 返回非法 JSON 时 markFailure，异常不含 Key ─────────────────
@@ -137,9 +137,9 @@ class ClozeServiceProviderTest {
         RuntimeException ex = assertThrows(RuntimeException.class,
                 () -> service.generate(USER_ID, List.of("sample"), null, "medium"));
 
-        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.CLOZE_GENERATE, AiKeyMode.USER);
-        verify(aiUsageGuard).markFailure(eq(USER_ID), eq(AiFeature.CLOZE_GENERATE), eq(AiKeyMode.USER), any());
-        verify(aiUsageGuard, never()).markSuccess(any(), any(), any());
+        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.CLOZE_GENERATE, AiKeyMode.USER, "DEEPSEEK");
+        verify(aiUsageGuard).markFailure(eq(USER_ID), eq(AiFeature.CLOZE_GENERATE), eq(AiKeyMode.USER), eq("DEEPSEEK"), any());
+        verify(aiUsageGuard, never()).markSuccess(any(), any(), any(), any());
         assertFalse(ex.getMessage().contains(USER_KEY));
         assertFalse(ex.getMessage().contains("sk-"));
         assertTrue(ex.getMessage().contains("AI 服务暂时不可用"));
@@ -160,9 +160,9 @@ class ClozeServiceProviderTest {
                 Map.of("1", "A"));
 
         assertEquals(1, ((Number) result.get("score")).intValue());
-        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.CLOZE_CHECK, AiKeyMode.BUILTIN);
-        verify(aiUsageGuard).markSuccess(USER_ID, AiFeature.CLOZE_CHECK, AiKeyMode.BUILTIN);
-        verify(aiUsageGuard, never()).markFailure(any(), any(), any(), any());
+        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.CLOZE_CHECK, AiKeyMode.BUILTIN, "DEEPSEEK");
+        verify(aiUsageGuard).markSuccess(USER_ID, AiFeature.CLOZE_CHECK, AiKeyMode.BUILTIN, "DEEPSEEK");
+        verify(aiUsageGuard, never()).markFailure(any(), any(), any(), any(), any());
     }
 
     // ── 4. check client 抛异常（含测试 key）时 markFailure，异常不含 key ─────────
@@ -180,9 +180,9 @@ class ClozeServiceProviderTest {
                         List.of(Map.of("number", 1)),
                         Map.of("1", "A")));
 
-        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.CLOZE_CHECK, AiKeyMode.USER);
-        verify(aiUsageGuard).markFailure(eq(USER_ID), eq(AiFeature.CLOZE_CHECK), eq(AiKeyMode.USER), any());
-        verify(aiUsageGuard, never()).markSuccess(any(), any(), any());
+        verify(aiUsageGuard).checkBeforeCall(USER_ID, AiFeature.CLOZE_CHECK, AiKeyMode.USER, "DEEPSEEK");
+        verify(aiUsageGuard).markFailure(eq(USER_ID), eq(AiFeature.CLOZE_CHECK), eq(AiKeyMode.USER), eq("DEEPSEEK"), any());
+        verify(aiUsageGuard, never()).markSuccess(any(), any(), any(), any());
         assertFalse(ex.getMessage().contains(USER_KEY));
         assertFalse(ex.getMessage().contains("sk-"));
         assertTrue(ex.getMessage().contains("AI 服务暂时不可用"));
@@ -256,7 +256,7 @@ class ClozeServiceProviderTest {
                 Map.of("1", "A"));
 
         assertEquals(1, ((Number) result.get("score")).intValue());
-        verify(aiUsageGuard).markSuccess(USER_ID, AiFeature.CLOZE_CHECK, AiKeyMode.BUILTIN);
+        verify(aiUsageGuard).markSuccess(USER_ID, AiFeature.CLOZE_CHECK, AiKeyMode.BUILTIN, "DEEPSEEK");
     }
 
     // ── 7. generate difficulty 非法时 fallback medium（不拒绝）──────────────────
@@ -271,7 +271,7 @@ class ClozeServiceProviderTest {
         Map<String, Object> result = service.generate(USER_ID,
                 List.of("sample"), null, "extreme");
         assertEquals("Test Passage", result.get("title"));
-        verify(aiUsageGuard).markSuccess(USER_ID, AiFeature.CLOZE_GENERATE, AiKeyMode.USER);
+        verify(aiUsageGuard).markSuccess(USER_ID, AiFeature.CLOZE_GENERATE, AiKeyMode.USER, "DEEPSEEK");
     }
 
     // ── 8. resolve 失败时不调用 markFailure（调用未发生） ──────────────────────
@@ -284,7 +284,7 @@ class ClozeServiceProviderTest {
         assertThrows(IllegalStateException.class,
                 () -> service.generate(USER_ID, List.of("sample"), null, "medium"));
 
-        verify(aiUsageGuard, never()).markFailure(any(), any(), any(), any());
-        verify(aiUsageGuard, never()).markSuccess(any(), any(), any());
+        verify(aiUsageGuard, never()).markFailure(any(), any(), any(), any(), any());
+        verify(aiUsageGuard, never()).markSuccess(any(), any(), any(), any());
     }
 }

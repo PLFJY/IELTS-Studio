@@ -120,13 +120,13 @@ class AiUsageQueryServiceTest {
         verify(quotaMapper, never()).update(any(), any());
     }
 
-    // ─── 4. 最近记录：顺序保持，字段正确，无 key 字段 ────────────────────────
+    // ─── 4. 最近记录：顺序保持，字段正确，无 key 字段，含 provider ─────────────
 
     @Test
     void shouldReturnRecentRecords() {
-        AiUsageRecord r1 = newRecord("TEXT", "WRITING_GRADE", 2, "BUILTIN", "SUCCESS", null);
-        AiUsageRecord r2 = newRecord("VISION", "EXAM_PRECISE_PARSE", 0, "BUILTIN", "FAILED", "RuntimeException: timeout");
-        AiUsageRecord r3 = newRecord("TEXT", "AI_CHAT", 0, "USER", "REJECTED", "RATE_LIMITED");
+        AiUsageRecord r1 = newRecord("TEXT", "WRITING_GRADE", 2, "BUILTIN", "SUCCESS", null, "DEEPSEEK");
+        AiUsageRecord r2 = newRecord("VISION", "EXAM_PRECISE_PARSE", 0, "BUILTIN", "FAILED", "RuntimeException: timeout", "QWEN");
+        AiUsageRecord r3 = newRecord("TEXT", "AI_CHAT", 0, "USER", "REJECTED", "RATE_LIMITED", "MIMO");
         when(quotaMapper.selectOne(any())).thenReturn(null);
         when(userAiSettingsMapper.selectOne(any())).thenReturn(null);
         when(recordMapper.selectList(any())).thenReturn(List.of(r1, r2, r3));
@@ -145,6 +145,10 @@ class AiUsageQueryServiceTest {
         assertEquals("FAILED", dto.getRecentRecords().get(1).getStatus());
         assertEquals("REJECTED", dto.getRecentRecords().get(2).getStatus());
         assertEquals("RATE_LIMITED", dto.getRecentRecords().get(2).getErrorMessage());
+        // Phase 6B-2A：provider 字段必须透传到 DTO
+        assertEquals("DEEPSEEK", dto.getRecentRecords().get(0).getProvider());
+        assertEquals("QWEN", dto.getRecentRecords().get(1).getProvider());
+        assertEquals("MIMO", dto.getRecentRecords().get(2).getProvider());
         // AiUsageRecordDto 类不含任何 apiKey/encrypted/masked 字段（结构保证），此处不额外断言
     }
 
@@ -171,13 +175,15 @@ class AiUsageQueryServiceTest {
     }
 
     private AiUsageRecord newRecord(String taskType, String feature, int cost,
-                                    String keyMode, String status, String errorMessage) {
+                                    String keyMode, String status, String errorMessage,
+                                    String provider) {
         AiUsageRecord r = new AiUsageRecord();
         r.setCreatedAt(LocalDateTime.now());
         r.setTaskType(taskType);
         r.setFeature(feature);
         r.setCost(cost);
         r.setKeyMode(keyMode);
+        r.setProvider(provider);
         r.setStatus(status);
         r.setErrorMessage(errorMessage);
         return r;

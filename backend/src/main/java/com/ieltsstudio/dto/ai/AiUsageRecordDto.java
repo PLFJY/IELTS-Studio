@@ -28,6 +28,9 @@ public class AiUsageRecordDto {
     /** Key 模式：BUILTIN / USER */
     private String keyMode;
 
+    /** Provider 枚举名：DEEPSEEK / QWEN / MIMO / OPENAI_COMPATIBLE，可能为 null */
+    private String provider;
+
     /** 状态：SUCCESS / FAILED / REJECTED */
     private String status;
 
