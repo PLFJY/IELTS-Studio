@@ -278,6 +278,18 @@ npm run dev
 
 ---
 
+## CI and release checklist
+
+GitHub Actions 会在每次 push / pull request 时自动运行 backend tests、frontend build 与基础安全 grep 检查（见 [.github/workflows/ci.yml](./.github/workflows/ci.yml)）。
+
+当前阶段 CI 只负责验证与产出临时构建 artifact，**不执行自动部署**——服务器部署由维护者手动执行。详见：
+
+- [docs/deployment-config.md](./docs/deployment-config.md)：部署环境变量与生产安全 checklist
+- [docs/release-checklist.md](./docs/release-checklist.md)：发布检查项、部署方式、数据库迁移、回滚说明
+- [docs/ai-provider-smoke-test.md](./docs/ai-provider-smoke-test.md)：发布后手动 smoke test checklist
+
+---
+
 ## 试卷解析模式
 
 ### 普通解析（推荐优先尝试）
