@@ -49,7 +49,9 @@ spring:
 # Feature flags（默认不开启 Redis，需显式设置 APP_REDIS_ENABLED=true）
 app:
   redis:
-    enabled: ${APP_REDIS_ENABLED:true}  # true 启用 Redis；false 或缺省则走本地内存降级
+    # 缺省（不设置 APP_REDIS_ENABLED）时为 false，使用单机内存限流；
+    # 设置 APP_REDIS_ENABLED=true 启用 Redis 分布式限流（多实例共享计数）。
+    enabled: ${APP_REDIS_ENABLED:false}
 
 # ─── MyBatis-Plus 配置 ──────────────────────────────────────────────────────
 mybatis-plus:

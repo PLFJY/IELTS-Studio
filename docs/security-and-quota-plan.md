@@ -161,3 +161,14 @@ IELTS Studio 的 AI 接口会真实调用第三方 provider（DeepSeek / Qwen / 
 - Redis 操作抛异常时由 `AiUsageGuard` 捕获并 fallback，**不向用户暴露** Redis 异常 message。
 - 限流触发仍写 `ai_usage_records` 的 `REJECTED` 流水，cost=0，provider 字段保留。
 - 不修改数据库表结构、不修改扣费策略、不新增依赖、不修改 BUILTIN 预扣/回滚逻辑。
+
+### 6.6 Phase 7A：发布前验收
+
+- 发布前必须运行后端 `mvn test` 与前端 `npm run build`。
+- 必须检查 AI settings / usage / admin usage 接口不返回 API Key、encrypted key、masked key 以外的敏感字段。
+- 必须确认 `/admin/**` 仅 ADMIN 可访问。
+- 必须确认 Redis disabled 时仍可启动并使用内存限流，Redis enabled 时使用 Redis 分布式限流。
+- `app.redis.enabled` 默认值为 `false`（不配置时走内存限流）；设置 `APP_REDIS_ENABLED=true` 启用 Redis 分布式限流。
+- 敏感字段 grep 必须分类确认：允许出现在加密工具 / masked 展示 / tests fake key / docs 安全说明 / `OpenAiCompatibleClient` 统一调用 / application config placeholder；不允许出现在前端 localStorage、DTO `toString()`、Controller 返回值、含 provider body 的日志、绕过 `OpenAiCompatibleClient` 的直接 `Authorization: Bearer <key>` 拼接。
+- 旧 `callDeepSeek` / `QwenDocumentParseService` 必须已删除；`SHARED_HTTP_CLIENT` 仅允许存在于 `OpenAiCompatibleClient`（统一客户端）。
+- 发布前应执行 `docs/ai-provider-smoke-test.md` 中的 smoke test checklist。
