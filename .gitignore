@@ -10,6 +10,11 @@ frontend/node_modules/
 *.swp
 
 # ─── 环境变量文件（含密钥，严禁提交）───────────────────────────
+# 根目录 .env（后端/统一环境变量模板的实际填充值）
+.env
+.env.local
+.env.production
+# 前端环境变量
 frontend/.env
 frontend/.env.local
 frontend/.env.production

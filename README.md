@@ -267,6 +267,17 @@ npm run dev
 
 ---
 
+## Deployment configuration
+
+生产部署所需的环境变量、安全注意事项与本地开发示例见：
+
+- **[docs/deployment-config.md](./docs/deployment-config.md)**：完整部署配置说明（必填 / 可选变量、Redis 开关、加密密钥、生产安全 checklist）
+- **[.env.example](./.env.example)**：环境变量模板，复制为 `.env` 后填入实际值（`.env` 已在 `.gitignore` 中）
+
+> ⚠️ 生产环境必须通过环境变量注入 `JWT_SECRET`、`DB_PASSWORD`、`AI_KEY_ENCRYPTION_SECRET`、`CORS_ALLOWED_ORIGINS` 等敏感配置，禁止依赖 `application.yml` 中的开发默认值。
+
+---
+
 ## 试卷解析模式
 
 ### 普通解析（推荐优先尝试）

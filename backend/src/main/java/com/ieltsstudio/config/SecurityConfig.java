@@ -13,11 +13,13 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -38,6 +40,13 @@ public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
     private final JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint;
+
+    /**
+     * 生产环境通过 CORS_ALLOWED_ORIGINS 注入实际前端域名（逗号分隔）；
+     * 留空时仅允许 localhost / 127.0.0.1 / [::1]（仅适用于本地开发）。
+     */
+    @Value("${app.cors.allowed-origins:}")
+    private String allowedOriginsCsv;
 
     /**
      * 密码编码器：使用 BCrypt 哈希算法
@@ -88,12 +97,16 @@ public class SecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
 
-        // 允许的前端来源（本地开发任意端口）
-        config.setAllowedOriginPatterns(List.of(
-            "http://localhost:*",
-            "http://127.0.0.1:*",
-            "http://[::1]:*"
-        ));
+        // 允许的前端来源：
+        // - 生产环境通过 CORS_ALLOWED_ORIGINS 环境变量注入实际前端域名（逗号分隔）；
+        // - 留空时仅允许 localhost / 127.0.0.1 / [::1]（本地开发任意端口）。
+        List<String> originPatterns = (allowedOriginsCsv == null || allowedOriginsCsv.isBlank())
+            ? List.of("http://localhost:*", "http://127.0.0.1:*", "http://[::1]:*")
+            : Arrays.stream(allowedOriginsCsv.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .toList();
+        config.setAllowedOriginPatterns(originPatterns);
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
         config.setAllowedHeaders(List.of("*"));
         config.setAllowCredentials(true);
