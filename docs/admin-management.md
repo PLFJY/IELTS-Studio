@@ -118,6 +118,7 @@ Phase 8C 引入轻量后台权限增强。系统仍保留 USER / ADMIN 两级基
 | `ADMIN_QUOTA_VIEW` | 查看用户 quota |
 | `ADMIN_QUOTA_MANAGE` | 调整用户 quota（setTotal / grant / resetUsed） |
 | `ADMIN_PERMISSIONS_MANAGE` | 分配 / 修改其他 ADMIN 的 permissions（最高风险权限） |
+| `ADMIN_AUDIT_LOG_VIEW` | 查看管理端操作审计日志（Phase 8D） |
 
 ### 6.2 数据库表
 
@@ -166,6 +167,7 @@ CREATE TABLE IF NOT EXISTS admin_user_permissions (
 | `GET /api/admin/ai-usage/summary` / `GET /api/admin/ai-usage/recent` | `ADMIN_AI_USAGE_VIEW` |
 | `GET /api/admin/quotas` / `GET /api/admin/quotas/users/{userId}` | `ADMIN_QUOTA_VIEW` |
 | `PUT /api/admin/quotas/users/{userId}/total` / `POST /api/admin/quotas/users/{userId}/grant` / `POST /api/admin/quotas/users/{userId}/reset-used` | `ADMIN_QUOTA_MANAGE` |
+| `GET /api/admin/audit-logs` | `ADMIN_AUDIT_LOG_VIEW`（Phase 8D） |
 
 ### 6.7 安全规则
 
@@ -184,6 +186,74 @@ CREATE TABLE IF NOT EXISTS admin_user_permissions (
 - **API**：`frontend/src/api/adminPermissions.js`（`getMyPermissions` / `listPermissions` / `getUserPermissions` / `updateUserPermissions`）。
 - **Store**：`frontend/src/stores/auth.js` 新增 `adminPermissions` ref + `loadAdminPermissions()` 懒加载 + `hasAdminPermission(perm)` helper；`logout()` 时清空。
 - **NavBar**：用户下拉与移动端菜单按权限显示「用户管理 / 额度管理 / AI 使用统计」入口（需对应 `*_VIEW` 权限）；mounted 时懒加载当前 ADMIN 权限。
-- **AdminUsersView**：操作列新增「权限」按钮（仅当前 ADMIN 持有 `ADMIN_PERMISSIONS_MANAGE` 时显示），点击打开权限配置 Dialog（7 个 checkbox + 显式模式状态 + 安全规则提示），保存调用 `PUT /admin/permissions/users/{userId}`。
+- **AdminUsersView**：操作列新增「权限」按钮（仅当前 ADMIN 持有 `ADMIN_PERMISSIONS_MANAGE` 时显示），点击打开权限配置 Dialog（8 个 checkbox + 显式模式状态 + 安全规则提示），保存调用 `PUT /admin/permissions/users/{userId}`。
 - **前端权限仅做 UX 隐藏**，后端 `/admin/**` 接口仍会做精细权限校验兜底。
+
+---
+
+## 7. Admin audit logs
+
+Phase 8D 引入管理端操作审计日志，记录高风险 Admin 写操作，便于后续追溯。审计日志只记录写操作，普通列表/详情查询不入库。
+
+### 7.1 记录的写操作
+
+| action | resourceType | 触发接口 |
+|---|---|---|
+| `USER_CREATE` | USER | `POST /api/admin/users` |
+| `USER_UPDATE_ROLE` | USER | `PUT /api/admin/users/{id}/role` |
+| `USER_DISABLE` | USER | `PUT /api/admin/users/{id}/disable` |
+| `USER_ENABLE` | USER | `PUT /api/admin/users/{id}/enable` |
+| `USER_RESET_PASSWORD` | USER | `POST /api/admin/users/{id}/reset-password` |
+| `QUOTA_SET_TOTAL` | QUOTA | `PUT /api/admin/quotas/users/{userId}/total` |
+| `QUOTA_GRANT` | QUOTA | `POST /api/admin/quotas/users/{userId}/grant` |
+| `QUOTA_RESET_USED` | QUOTA | `POST /api/admin/quotas/users/{userId}/reset-used` |
+| `PERMISSION_UPDATE` | PERMISSION | `PUT /api/admin/permissions/users/{userId}` |
+
+### 7.2 数据库表
+
+`admin_operation_logs`，字段：`id` / `actor_user_id` / `actor_username`（快照）/ `action` / `resource_type` / `resource_id` / `target_user_id` / `status`（SUCCESS/FAILED）/ `summary`（脱敏）/ `ip_address` / `user_agent` / `created_at`。无软删除字段，审计日志不允许删除。
+
+### 7.3 summary 脱敏规则
+
+`AdminAuditLogService.sanitizeSummary(summary)` 在写入前对以下关键字做替换为 `***`（不区分大小写）：
+
+- `password` / `newpassword`
+- `apikey` / `api_key`
+- `authorization` / `bearer`
+- `sk-xxx`（DeepSeek/OpenAI 风格 key 前缀）
+- `token` / `jwt`
+- `encrypted key` / `masked key`
+
+并截断到 1000 字符（与 DB 列长度一致）。
+
+重置密码场景 summary 只记录 `reset password for userId=xxx`，绝不记录密码内容。
+
+### 7.4 查询接口
+
+`GET /api/admin/audit-logs`（需 `ADMIN_AUDIT_LOG_VIEW` 权限），支持筛选：
+
+- `actorUserId` / `targetUserId`
+- `action` / `resourceType` / `status`
+- `dateFrom` / `dateTo`（ISO-8601）
+- `page`（默认 1，最小 1）/ `pageSize`（默认 20，范围 1~100）
+
+结果按 `created_at DESC, id DESC` 排序。返回 DTO 不含 password/apiKey/token 等敏感字段。
+
+### 7.5 失败审计
+
+Phase 8D 先记录成功写操作；`AdminAuditLogService.recordFailure(...)` 已实现，但本阶段不强制在所有失败路径调用，留到后续增强。
+
+### 7.6 安全
+
+- 审计日志写入失败不影响主业务流程（catch + warn log）。
+- 审计日志不允许删除（无 delete 方法）。
+- 兼容模式下所有 ADMIN 自动拥有 `ADMIN_AUDIT_LOG_VIEW`；显式模式下需显式分配。`ADMIN_PERMISSIONS_MANAGE` 不自动等于 `ADMIN_AUDIT_LOG_VIEW`，除非显式分配。
+
+### 7.7 前端
+
+- **API**：`frontend/src/api/adminAuditLogs.js`（`listLogs`）。
+- **页面**：`frontend/src/views/admin/AdminAuditLogsView.vue`，顶部筛选（actor/target/action/resource/status/dateRange）+ 表格（时间/操作者/Action/Resource/目标/Status/Summary/IP/UA）+ 分页。
+- **路由**：`/admin/audit-logs`，`meta: { requiresAuth: true, requiresAdmin: true }`。
+- **NavBar**：用户下拉与移动端菜单按 `ADMIN_AUDIT_LOG_VIEW` 显示「审计日志」入口。
+- **AdminUsersView 权限 Dialog**：权限 checkbox 列表新增 `ADMIN_AUDIT_LOG_VIEW` 项。
 

@@ -63,6 +63,9 @@
                 <el-dropdown-item v-if="authStore.isAdmin && authStore.hasAdminPermission('ADMIN_AI_USAGE_VIEW')" command="adminAiUsage">
                   <el-icon><DataLine /></el-icon> AI 使用统计
                 </el-dropdown-item>
+                <el-dropdown-item v-if="authStore.isAdmin && authStore.hasAdminPermission('ADMIN_AUDIT_LOG_VIEW')" command="adminAuditLogs">
+                  <el-icon><Document /></el-icon> 审计日志
+                </el-dropdown-item>
                 <el-dropdown-item divided command="logout">
                   <el-icon><SwitchButton /></el-icon> 退出登录
                 </el-dropdown-item>
@@ -106,6 +109,9 @@
           <router-link v-if="authStore.isAdmin && authStore.hasAdminPermission('ADMIN_AI_USAGE_VIEW')" to="/admin/ai-usage" class="mobile-link" @click="mobileOpen = false">
             <i class="fa-solid fa-chart-line"></i> AI 使用统计
           </router-link>
+          <router-link v-if="authStore.isAdmin && authStore.hasAdminPermission('ADMIN_AUDIT_LOG_VIEW')" to="/admin/audit-logs" class="mobile-link" @click="mobileOpen = false">
+            <i class="fa-solid fa-clipboard-list"></i> 审计日志
+          </router-link>
           <button class="mobile-link mobile-logout" @click="handleLogout">退出登录</button>
         </template>
       </div>
@@ -134,6 +140,7 @@ function handleCommand(cmd) {
   else if (cmd === 'adminUsers') router.push('/admin/users')
   else if (cmd === 'adminQuotas') router.push('/admin/quotas')
   else if (cmd === 'adminAiUsage') router.push('/admin/ai-usage')
+  else if (cmd === 'adminAuditLogs') router.push('/admin/audit-logs')
   else if (cmd === 'logout') handleLogout()
 }
 

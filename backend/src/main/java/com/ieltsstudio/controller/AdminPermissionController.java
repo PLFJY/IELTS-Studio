@@ -3,9 +3,12 @@ package com.ieltsstudio.controller;
 import com.ieltsstudio.common.Result;
 import com.ieltsstudio.dto.admin.AdminPermissionDto;
 import com.ieltsstudio.dto.admin.AdminUpdatePermissionsRequest;
+import com.ieltsstudio.entity.AdminOperationAction;
 import com.ieltsstudio.entity.AdminPermission;
 import com.ieltsstudio.security.AuthUser;
+import com.ieltsstudio.service.AdminAuditLogService;
 import com.ieltsstudio.service.AdminPermissionService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -48,6 +51,7 @@ import java.util.List;
 public class AdminPermissionController {
 
     private final AdminPermissionService adminPermissionService;
+    private final AdminAuditLogService adminAuditLogService;
 
     /**
      * 列出所有合法权限枚举名。
@@ -100,10 +104,15 @@ public class AdminPermissionController {
     public Result<AdminPermissionDto> updateUserPermissions(
             @AuthenticationPrincipal AuthUser authUser,
             @PathVariable Long userId,
-            @Valid @RequestBody AdminUpdatePermissionsRequest request) {
+            @Valid @RequestBody AdminUpdatePermissionsRequest request,
+            HttpServletRequest httpRequest) {
         requireAdmin(authUser, AdminPermission.ADMIN_PERMISSIONS_MANAGE);
-        return Result.success(adminPermissionService.updateUserPermissions(
-                authUser.getId(), userId, request.getPermissions()));
+        AdminPermissionDto dto = adminPermissionService.updateUserPermissions(
+                authUser.getId(), userId, request.getPermissions());
+        // 权限名不是敏感字段，可以记录；但限制长度（service 内 sanitize 会截断到 1000）
+        adminAuditLogService.recordSuccess(authUser, AdminOperationAction.PERMISSION_UPDATE, "PERMISSION",
+                userId, userId, "permissions=" + request.getPermissions(), httpRequest);
+        return Result.success(dto);
     }
 
     /**

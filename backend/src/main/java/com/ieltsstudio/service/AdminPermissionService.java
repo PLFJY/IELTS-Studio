@@ -9,6 +9,7 @@ import com.ieltsstudio.mapper.UserMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Arrays;
 import java.util.LinkedHashSet;
@@ -168,11 +169,15 @@ public class AdminPermissionService {
      *
      * <p>执行 5 条安全规则（见类注释），任一不满足时抛 {@link RuntimeException}。</p>
      *
+     * <p><b>事务：</b>加 {@link Transactional} 防止"删除成功但插入失败"导致目标 ADMIN 权限被部分清空。
+     * 单元测试无法直接验证事务行为，但代码必须加注解（Phase 8D §三.2 polish）。</p>
+     *
      * @param currentAdminId 当前操作者 ID（用于"不能移除自己 ADMIN_PERMISSIONS_MANAGE"保护）
      * @param targetUserId   被更新用户 ID
      * @param permissions    新权限集合（{@link AdminPermission} 枚举名）
      * @return 更新后的权限视图 DTO
      */
+    @Transactional
     public AdminPermissionDto updateUserPermissions(Long currentAdminId, Long targetUserId, Set<String> permissions) {
         if (currentAdminId == null || targetUserId == null) {
             throw new RuntimeException("currentAdminId / targetUserId 不能为空");

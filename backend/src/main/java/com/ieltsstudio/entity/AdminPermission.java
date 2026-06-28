@@ -33,7 +33,10 @@ public enum AdminPermission {
     ADMIN_QUOTA_MANAGE,
 
     /** 分配 / 修改其他 ADMIN 的 permissions（最高风险权限） */
-    ADMIN_PERMISSIONS_MANAGE;
+    ADMIN_PERMISSIONS_MANAGE,
+
+    /** 查看管理端操作审计日志（Phase 8D） */
+    ADMIN_AUDIT_LOG_VIEW;
 
     /**
      * 判断字符串是否为合法的 {@link AdminPermission} 枚举名。

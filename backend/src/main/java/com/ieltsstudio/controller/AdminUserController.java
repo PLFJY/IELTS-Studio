@@ -6,10 +6,13 @@ import com.ieltsstudio.dto.admin.AdminResetPasswordRequest;
 import com.ieltsstudio.dto.admin.AdminUpdateUserRoleRequest;
 import com.ieltsstudio.dto.admin.AdminUserDto;
 import com.ieltsstudio.dto.admin.AdminUserPageDto;
+import com.ieltsstudio.entity.AdminOperationAction;
 import com.ieltsstudio.entity.AdminPermission;
 import com.ieltsstudio.security.AuthUser;
+import com.ieltsstudio.service.AdminAuditLogService;
 import com.ieltsstudio.service.AdminPermissionService;
 import com.ieltsstudio.service.AdminUserService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -60,6 +63,7 @@ public class AdminUserController {
 
     private final AdminUserService adminUserService;
     private final AdminPermissionService adminPermissionService;
+    private final AdminAuditLogService adminAuditLogService;
 
     /**
      * 用户列表（分页 + 筛选）。
@@ -89,9 +93,15 @@ public class AdminUserController {
     @PostMapping
     public Result<AdminUserDto> create(
             @AuthenticationPrincipal AuthUser authUser,
-            @Valid @RequestBody AdminCreateUserRequest request) {
+            @Valid @RequestBody AdminCreateUserRequest request,
+            HttpServletRequest httpRequest) {
         requireAdmin(authUser, AdminPermission.ADMIN_USERS_MANAGE);
-        return Result.success(adminUserService.createUser(request));
+        AdminUserDto created = adminUserService.createUser(request);
+        adminAuditLogService.recordSuccess(authUser, AdminOperationAction.USER_CREATE, "USER",
+                created.getId(), created.getId(),
+                "create user username=" + created.getUsername() + " role=" + created.getRole(),
+                httpRequest);
+        return Result.success(created);
     }
 
     /**
@@ -118,9 +128,13 @@ public class AdminUserController {
     public Result<AdminUserDto> updateRole(
             @AuthenticationPrincipal AuthUser authUser,
             @PathVariable Long id,
-            @Valid @RequestBody AdminUpdateUserRoleRequest request) {
+            @Valid @RequestBody AdminUpdateUserRoleRequest request,
+            HttpServletRequest httpRequest) {
         requireAdmin(authUser, AdminPermission.ADMIN_USERS_MANAGE);
-        return Result.success(adminUserService.updateRole(authUser.getId(), id, request.getRole()));
+        AdminUserDto updated = adminUserService.updateRole(authUser.getId(), id, request.getRole());
+        adminAuditLogService.recordSuccess(authUser, AdminOperationAction.USER_UPDATE_ROLE, "USER",
+                id, id, "update role to " + updated.getRole(), httpRequest);
+        return Result.success(updated);
     }
 
     /**
@@ -133,9 +147,13 @@ public class AdminUserController {
     @PutMapping("/{id}/disable")
     public Result<AdminUserDto> disable(
             @AuthenticationPrincipal AuthUser authUser,
-            @PathVariable Long id) {
+            @PathVariable Long id,
+            HttpServletRequest httpRequest) {
         requireAdmin(authUser, AdminPermission.ADMIN_USERS_MANAGE);
-        return Result.success(adminUserService.disableUser(authUser.getId(), id));
+        AdminUserDto updated = adminUserService.disableUser(authUser.getId(), id);
+        adminAuditLogService.recordSuccess(authUser, AdminOperationAction.USER_DISABLE, "USER",
+                id, id, "disable user", httpRequest);
+        return Result.success(updated);
     }
 
     /**
@@ -146,9 +164,13 @@ public class AdminUserController {
     @PutMapping("/{id}/enable")
     public Result<AdminUserDto> enable(
             @AuthenticationPrincipal AuthUser authUser,
-            @PathVariable Long id) {
+            @PathVariable Long id,
+            HttpServletRequest httpRequest) {
         requireAdmin(authUser, AdminPermission.ADMIN_USERS_MANAGE);
-        return Result.success(adminUserService.enableUser(authUser.getId(), id));
+        AdminUserDto updated = adminUserService.enableUser(authUser.getId(), id);
+        adminAuditLogService.recordSuccess(authUser, AdminOperationAction.USER_ENABLE, "USER",
+                id, id, "enable user", httpRequest);
+        return Result.success(updated);
     }
 
     /**
@@ -163,9 +185,13 @@ public class AdminUserController {
     public Result<Void> resetPassword(
             @AuthenticationPrincipal AuthUser authUser,
             @PathVariable Long id,
-            @Valid @RequestBody AdminResetPasswordRequest request) {
+            @Valid @RequestBody AdminResetPasswordRequest request,
+            HttpServletRequest httpRequest) {
         requireAdmin(authUser, AdminPermission.ADMIN_USERS_RESET_PASSWORD);
         adminUserService.resetPassword(id, request.getNewPassword());
+        // 安全：summary 绝不记录密码内容，只记录目标 userId
+        adminAuditLogService.recordSuccess(authUser, AdminOperationAction.USER_RESET_PASSWORD, "USER",
+                id, id, "reset password for userId=" + id, httpRequest);
         return Result.success();
     }
 

@@ -10,7 +10,7 @@
 - 位置：`backend/src/main/resources/db/init.sql`
 - 数据库名：`ielts_studio`
 - 字符集：`utf8mb4` / `utf8mb4_unicode_ci`
-- 现有表：`users`、`exams`、`exam_sections`、`questions`、`exam_records`、`error_book`、`word_books`、`word_entries`、`word_progress`、`word_study_states`、`exam_collections`、`exam_collection_items`、`study_checkins`、`user_ai_settings`、`ai_usage_quota`、`ai_usage_records`、`admin_user_permissions`
+- 现有表：`users`、`exams`、`exam_sections`、`questions`、`exam_records`、`error_book`、`word_books`、`word_entries`、`word_progress`、`word_study_states`、`exam_collections`、`exam_collection_items`、`study_checkins`、`user_ai_settings`、`ai_usage_quota`、`ai_usage_records`、`admin_user_permissions`、`admin_operation_logs`
 - 命名约定：表名/字段名 snake_case，时间字段 `created_at` / `updated_at`，软删除字段 `deleted TINYINT(1)`
 
 ---
@@ -209,7 +209,74 @@ CREATE TABLE IF NOT EXISTS admin_user_permissions (
 
 ---
 
-## 8. 改动流程总结
+## 8. `admin_operation_logs` 表
+
+Phase 8D 引入管理端操作审计日志。记录高风险 Admin 写操作（创建/修改/禁用/启用/重置密码/quota/权限），便于后续追溯。普通列表/详情查询不入库。
+
+### 表结构
+
+```sql
+CREATE TABLE IF NOT EXISTS admin_operation_logs (
+    id              BIGINT       NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    actor_user_id   BIGINT       NOT NULL,
+    actor_username  VARCHAR(100),
+    action          VARCHAR(80)  NOT NULL,                -- AdminOperationAction 枚举名
+    resource_type   VARCHAR(80)  NOT NULL,                -- USER / QUOTA / PERMISSION
+    resource_id     BIGINT,
+    target_user_id  BIGINT,
+    status          VARCHAR(20)  NOT NULL,                -- SUCCESS / FAILED
+    summary         VARCHAR(1000),                        -- 脱敏摘要
+    ip_address      VARCHAR(80),
+    user_agent      VARCHAR(300),
+    created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    INDEX idx_admin_operation_logs_actor_user_id (actor_user_id),
+    INDEX idx_admin_operation_logs_action (action),
+    INDEX idx_admin_operation_logs_resource (resource_type, resource_id),
+    INDEX idx_admin_operation_logs_target_user_id (target_user_id),
+    INDEX idx_admin_operation_logs_status (status),
+    INDEX idx_admin_operation_logs_created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+```
+
+### 字段说明
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `actor_user_id` | BIGINT NOT NULL | 操作者用户 ID |
+| `actor_username` | VARCHAR(100) | 操作者用户名快照（便于用户改名后仍能审计） |
+| `action` | VARCHAR(80) NOT NULL | 操作枚举名（`AdminOperationAction`）：USER_CREATE / USER_UPDATE_ROLE / USER_DISABLE / USER_ENABLE / USER_RESET_PASSWORD / QUOTA_SET_TOTAL / QUOTA_GRANT / QUOTA_RESET_USED / PERMISSION_UPDATE |
+| `resource_type` | VARCHAR(80) NOT NULL | 资源类型：USER / QUOTA / PERMISSION |
+| `resource_id` | BIGINT | 资源 ID，可为空（quota 操作为 null） |
+| `target_user_id` | BIGINT | 被操作用户 ID，可为空 |
+| `status` | VARCHAR(20) NOT NULL | SUCCESS / FAILED |
+| `summary` | VARCHAR(1000) | 脱敏摘要，禁止含 password / API Key / token / Authorization / Bearer / provider body |
+| `ip_address` | VARCHAR(80) | 请求 IP（优先 X-Forwarded-For 第一段，其次 X-Real-IP，最后 remoteAddr） |
+| `user_agent` | VARCHAR(300) | 请求 User-Agent |
+| `created_at` | DATETIME NOT NULL | 操作时间 |
+
+### summary 脱敏规则
+
+`AdminAuditLogService.sanitizeSummary(summary)` 在写入前对 `password` / `newpassword` / `apikey` / `api_key` / `authorization` / `bearer` / `sk-xxx` / `token` / `jwt` / `encrypted key` / `masked key` 等关键字（不区分大小写）替换为 `***`，并截断到 1000 字符。重置密码场景 summary 只记录 `reset password for userId=xxx`，绝不记录密码内容。
+
+### 范围
+
+- Phase 8D 至少记录成功写操作；失败审计（`recordFailure`）已实现但本阶段不强制在所有失败路径调用。
+- 审计日志不允许删除（无 `@TableLogic` 软删除字段，无 delete 方法）。
+- 审计日志写入失败不影响主业务流程（catch + warn log）。
+
+### Migration note
+
+已有部署升级时执行（已在 `init.sql` 末尾以注释形式保留）：
+
+```sql
+-- Migration: run this if upgrading an existing deployment without admin_operation_logs table
+-- CREATE TABLE IF NOT EXISTS admin_operation_logs (...);
+```
+
+---
+
+## 9. 改动流程总结
 
 ```
 改 init.sql（CREATE / ALTER）

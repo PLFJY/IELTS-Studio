@@ -5,10 +5,13 @@ import com.ieltsstudio.dto.admin.AdminGrantCreditsRequest;
 import com.ieltsstudio.dto.admin.AdminQuotaDto;
 import com.ieltsstudio.dto.admin.AdminQuotaPageDto;
 import com.ieltsstudio.dto.admin.AdminSetQuotaTotalRequest;
+import com.ieltsstudio.entity.AdminOperationAction;
 import com.ieltsstudio.entity.AdminPermission;
 import com.ieltsstudio.security.AuthUser;
+import com.ieltsstudio.service.AdminAuditLogService;
 import com.ieltsstudio.service.AdminPermissionService;
 import com.ieltsstudio.service.AdminQuotaService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -59,6 +62,7 @@ public class AdminQuotaController {
 
     private final AdminQuotaService adminQuotaService;
     private final AdminPermissionService adminPermissionService;
+    private final AdminAuditLogService adminAuditLogService;
 
     /**
      * 查询用户当前周期 quota 列表（分页 + 筛选）。
@@ -105,9 +109,13 @@ public class AdminQuotaController {
     public Result<AdminQuotaDto> setTotal(
             @AuthenticationPrincipal AuthUser authUser,
             @PathVariable Long userId,
-            @Valid @RequestBody AdminSetQuotaTotalRequest request) {
+            @Valid @RequestBody AdminSetQuotaTotalRequest request,
+            HttpServletRequest httpRequest) {
         requireAdmin(authUser, AdminPermission.ADMIN_QUOTA_MANAGE);
-        return Result.success(adminQuotaService.setTotal(userId, request.getCreditsTotal()));
+        AdminQuotaDto dto = adminQuotaService.setTotal(userId, request.getCreditsTotal());
+        adminAuditLogService.recordSuccess(authUser, AdminOperationAction.QUOTA_SET_TOTAL, "QUOTA",
+                null, userId, "set creditsTotal=" + request.getCreditsTotal(), httpRequest);
+        return Result.success(dto);
     }
 
     /**
@@ -119,9 +127,13 @@ public class AdminQuotaController {
     public Result<AdminQuotaDto> grantCredits(
             @AuthenticationPrincipal AuthUser authUser,
             @PathVariable Long userId,
-            @Valid @RequestBody AdminGrantCreditsRequest request) {
+            @Valid @RequestBody AdminGrantCreditsRequest request,
+            HttpServletRequest httpRequest) {
         requireAdmin(authUser, AdminPermission.ADMIN_QUOTA_MANAGE);
-        return Result.success(adminQuotaService.grantCredits(userId, request.getCredits()));
+        AdminQuotaDto dto = adminQuotaService.grantCredits(userId, request.getCredits());
+        adminAuditLogService.recordSuccess(authUser, AdminOperationAction.QUOTA_GRANT, "QUOTA",
+                null, userId, "grant credits=" + request.getCredits(), httpRequest);
+        return Result.success(dto);
     }
 
     /**
@@ -132,9 +144,13 @@ public class AdminQuotaController {
     @PostMapping("/users/{userId}/reset-used")
     public Result<AdminQuotaDto> resetUsed(
             @AuthenticationPrincipal AuthUser authUser,
-            @PathVariable Long userId) {
+            @PathVariable Long userId,
+            HttpServletRequest httpRequest) {
         requireAdmin(authUser, AdminPermission.ADMIN_QUOTA_MANAGE);
-        return Result.success(adminQuotaService.resetUsed(userId));
+        AdminQuotaDto dto = adminQuotaService.resetUsed(userId);
+        adminAuditLogService.recordSuccess(authUser, AdminOperationAction.QUOTA_RESET_USED, "QUOTA",
+                null, userId, "reset creditsUsed=0", httpRequest);
+        return Result.success(dto);
     }
 
     /**

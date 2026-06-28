@@ -307,3 +307,34 @@ CREATE TABLE IF NOT EXISTS admin_user_permissions (
 
 -- Migration: run this if upgrading an existing deployment without admin_user_permissions table
 -- CREATE TABLE IF NOT EXISTS admin_user_permissions (...);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Phase 8D：Admin 操作审计日志
+-- admin_operation_logs 记录管理端高风险写操作（创建/修改/禁用/启用/重置密码/quota/权限）。
+-- summary 字段必须脱敏，禁止放 password / API Key / token / Authorization / provider body。
+-- 仅记录成功写操作；失败审计留到后续增强。
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS admin_operation_logs (
+    id              BIGINT       NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    actor_user_id   BIGINT       NOT NULL,
+    actor_username  VARCHAR(100),
+    action          VARCHAR(80)  NOT NULL,                -- AdminOperationAction 枚举名
+    resource_type   VARCHAR(80)  NOT NULL,                -- USER / QUOTA / PERMISSION
+    resource_id     BIGINT,
+    target_user_id  BIGINT,
+    status          VARCHAR(20)  NOT NULL,                -- SUCCESS / FAILED
+    summary         VARCHAR(1000),                        -- 脱敏摘要
+    ip_address      VARCHAR(80),
+    user_agent      VARCHAR(300),
+    created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    INDEX idx_admin_operation_logs_actor_user_id (actor_user_id),
+    INDEX idx_admin_operation_logs_action (action),
+    INDEX idx_admin_operation_logs_resource (resource_type, resource_id),
+    INDEX idx_admin_operation_logs_target_user_id (target_user_id),
+    INDEX idx_admin_operation_logs_status (status),
+    INDEX idx_admin_operation_logs_created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Migration: run this if upgrading an existing deployment without admin_operation_logs table
+-- CREATE TABLE IF NOT EXISTS admin_operation_logs (...);

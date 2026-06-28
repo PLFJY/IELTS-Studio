@@ -86,6 +86,12 @@ const routes = [
     component: () => import('@/views/admin/AdminAiUsageView.vue'),
     meta: { requiresAuth: true, requiresAdmin: true },
   },
+  {
+    path: '/admin/audit-logs',
+    name: 'AdminAuditLogs',
+    component: () => import('@/views/admin/AdminAuditLogsView.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true },
+  },
   // 未匹配的路径统一重定向到首页
   {
     path: '/:pathMatch(.*)*',

@@ -290,6 +290,7 @@ const allPermissions = [
   { value: 'ADMIN_QUOTA_VIEW', desc: '查看用户 quota' },
   { value: 'ADMIN_QUOTA_MANAGE', desc: '调整用户 quota（setTotal / grant / resetUsed）' },
   { value: 'ADMIN_PERMISSIONS_MANAGE', desc: '分配 / 修改其他 ADMIN 的权限（最高风险）' },
+  { value: 'ADMIN_AUDIT_LOG_VIEW', desc: '查看管理端操作审计日志' },
 ]
 
 const filters = reactive({
