@@ -39,6 +39,9 @@ export const useAuthStore = defineStore('auth', () => {
   /** 当前用户头像 URL */
   const avatar = computed(() => user.value?.avatar || '')
 
+  /** 是否为管理员（role === 'ADMIN'），用于前端隐藏 admin 入口；后端 /admin/** 仍会兜底鉴权 */
+  const isAdmin = computed(() => user.value?.role === 'ADMIN')
+
   // ─── 方法 ──────────────────────────────────────────────────────────────────
 
   /**
@@ -113,5 +116,5 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.setItem('ielts_user', JSON.stringify(user.value))
   }
 
-  return { token, user, isLoggedIn, username, avatar, initAuth, login, register, logout, updateUser }
+  return { token, user, isLoggedIn, username, avatar, isAdmin, initAuth, login, register, logout, updateUser }
 })

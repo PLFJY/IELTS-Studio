@@ -121,7 +121,7 @@ IELTS Studio 的 AI 接口会真实调用第三方 provider（DeepSeek / Qwen / 
 - **USER 模式限流**：本阶段使用**单机内存**滑动窗口（`ConcurrentHashMap` + 按分钟计数），每用户每 feature 每分钟 20 次，多实例不共享。
 - **流水状态**：`SUCCESS` / `FAILED` / `REJECTED` 三种，`REJECTED` 用于额度不足（BUILTIN）或限流触发（USER），cost 均为 0。
 - **errorMessage 脱敏**：移除 `Authorization: Bearer xxx` / `Bearer xxx` / `sk-xxx`，截断到 500 字符（对齐 `error_message VARCHAR(500)`）。
-- **待 Phase 6B-2B/2C**：管理端 usage 统计接口与面板（6B-2B）、Redis 分布式限流（6B-2C）。Provider 字段记录已在 Phase 6B-2A 落地（见 §6.3）。
+- **待 Phase 6B-2C**：Redis 分布式限流。管理端统计已在 Phase 6B-2B 落地（见 §6.4），Provider 字段记录已在 Phase 6B-2A 落地（见 §6.3）。
 
 ### 6.2 Phase 6B-1：额度查询与展示
 
@@ -141,3 +141,13 @@ IELTS Studio 的 AI 接口会真实调用第三方 provider（DeepSeek / Qwen / 
 - `AiUsageGuard` 旧三参数方法（`checkBeforeCall(userId, feature, keyMode)` / `markSuccess(...)` / `markFailure(..., ex)`）保留兼容，内部委托到 provider-aware overload 并传 `provider=null`；主 AI 调用点（`AiParseService` / `ClozeService` / `QwenAiParseService`）已全部迁移至新 overload。
 - 用户中心 `AiUsageCard.vue` 最近记录表新增 Provider 列，枚举名映射为展示名（`DEEPSEEK→DeepSeek` / `QWEN→Qwen` / `MIMO→MiMO` / `OPENAI_COMPATIBLE→OpenAI-compatible` / null→`-`），未知 provider 原样展示枚举名。
 - 该字段用于后续管理端统计与 provider 成功率分析，本阶段不做统计接口。
+
+### 6.4 Phase 6B-2B：管理端统计
+
+- ADMIN 可通过 `GET /api/admin/ai-usage/summary?days=7` 与 `GET /api/admin/ai-usage/recent?limit=50` 查看 AI usage 汇总统计与最近记录。
+- 权限：`SecurityConfig` 加 `.requestMatchers("/admin/**").hasRole("ADMIN")` 路由级拦截；`AdminAiUsageController` 内 `requireAdmin(AuthUser)` 做防御性二次校验（不信任前端传 role，userId/role 只从 `@AuthenticationPrincipal AuthUser` 取）。
+- 统计维度包括 status、provider、feature、keyMode、taskType、daily trend（缺失日期补 0）；`days` clamp 到 `[1,90]`，`limit` clamp 到 `[1,100]`。
+- recent records 仅用于排查，errorMessage 已由 `AiUsageGuard` 在写入时脱敏。
+- 统计 service 只读：不 insert / update / delete 任何数据；查询范围内全部 records 后在 Java 内 stream 聚合，避免写复杂 SQL。
+- 前端 `views/admin/AdminAiUsageView.vue` 仅 ADMIN 可见入口（NavBar 条件渲染 + 路由守卫 `requiresAdmin`）；后端 `/admin/**` 仍会返回 403 兜底，前端展示「无权限」提示。
+- 不返回 API Key / encrypted key / masked key / baseUrl / model / provider 原始响应体 / 用户密码 / 用户邮箱。

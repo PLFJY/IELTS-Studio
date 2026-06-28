@@ -54,6 +54,9 @@
                 <el-dropdown-item command="profile">
                   <el-icon><User /></el-icon> 个人中心
                 </el-dropdown-item>
+                <el-dropdown-item v-if="authStore.isAdmin" command="adminAiUsage">
+                  <el-icon><DataLine /></el-icon> AI 使用统计
+                </el-dropdown-item>
                 <el-dropdown-item divided command="logout">
                   <el-icon><SwitchButton /></el-icon> 退出登录
                 </el-dropdown-item>
@@ -88,6 +91,9 @@
         </template>
         <template v-else>
           <router-link to="/profile" class="mobile-link" @click="mobileOpen = false">个人中心</router-link>
+          <router-link v-if="authStore.isAdmin" to="/admin/ai-usage" class="mobile-link" @click="mobileOpen = false">
+            <i class="fa-solid fa-chart-line"></i> AI 使用统计
+          </router-link>
           <button class="mobile-link mobile-logout" @click="handleLogout">退出登录</button>
         </template>
       </div>
@@ -113,6 +119,7 @@ function handleScroll() {
 
 function handleCommand(cmd) {
   if (cmd === 'profile') router.push('/profile')
+  else if (cmd === 'adminAiUsage') router.push('/admin/ai-usage')
   else if (cmd === 'logout') handleLogout()
 }
 

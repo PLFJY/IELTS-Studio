@@ -67,6 +67,7 @@ public class SecurityConfig {
                 .requestMatchers("/auth/**").permitAll()                           // 注册/登录不需要认证
                 .requestMatchers(HttpMethod.GET, "/exams/public/**").permitAll()  // 公开试卷接口
                 .requestMatchers("/actuator/**").permitAll()                       // 健康检查接口
+                .requestMatchers("/admin/**").hasRole("ADMIN")                     // 管理端接口仅 ADMIN 可访问
                 .anyRequest().authenticated()                                      // 其余接口均需登录
             )
             // 未登录或 Token 过期时返回 JSON 错误（而非 302 重定向）
