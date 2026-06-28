@@ -57,6 +57,9 @@
                 <el-dropdown-item v-if="authStore.isAdmin" command="adminUsers">
                   <el-icon><UserFilled /></el-icon> 用户管理
                 </el-dropdown-item>
+                <el-dropdown-item v-if="authStore.isAdmin" command="adminQuotas">
+                  <el-icon><Coin /></el-icon> 额度管理
+                </el-dropdown-item>
                 <el-dropdown-item v-if="authStore.isAdmin" command="adminAiUsage">
                   <el-icon><DataLine /></el-icon> AI 使用统计
                 </el-dropdown-item>
@@ -97,6 +100,9 @@
           <router-link v-if="authStore.isAdmin" to="/admin/users" class="mobile-link" @click="mobileOpen = false">
             <i class="fa-solid fa-users-gear"></i> 用户管理
           </router-link>
+          <router-link v-if="authStore.isAdmin" to="/admin/quotas" class="mobile-link" @click="mobileOpen = false">
+            <i class="fa-solid fa-coins"></i> 额度管理
+          </router-link>
           <router-link v-if="authStore.isAdmin" to="/admin/ai-usage" class="mobile-link" @click="mobileOpen = false">
             <i class="fa-solid fa-chart-line"></i> AI 使用统计
           </router-link>
@@ -126,6 +132,7 @@ function handleScroll() {
 function handleCommand(cmd) {
   if (cmd === 'profile') router.push('/profile')
   else if (cmd === 'adminUsers') router.push('/admin/users')
+  else if (cmd === 'adminQuotas') router.push('/admin/quotas')
   else if (cmd === 'adminAiUsage') router.push('/admin/ai-usage')
   else if (cmd === 'logout') handleLogout()
 }

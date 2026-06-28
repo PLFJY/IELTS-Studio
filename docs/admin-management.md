@@ -30,6 +30,7 @@ Phase 8A 已落地的管理端用户管理能力（路径前缀 `/api/admin/user
 - **disable user** — `PUT /api/admin/users/{id}/disable`（deleted=1）
 - **enable user** — `PUT /api/admin/users/{id}/enable`（deleted=0，不改变 role）
 - **reset password** — `POST /api/admin/users/{id}/reset-password`（body: `{ "newPassword": "..." }`）
+- **create user** — `POST /api/admin/users`（body: `{ "username","email","password","role" }`，BCrypt 加密，role 白名单 USER/ADMIN）
 
 ### 逻辑删除处理
 
@@ -59,5 +60,44 @@ Phase 8A 已落地的管理端用户管理能力（路径前缀 `/api/admin/user
 
 ## 4. Future phases
 
-- **Phase 8B**: quota management — 用户级 AI credits 配额管理（发放/调整/重置周期）
 - **Phase 8C**: permission hardening / optional RBAC — 可选的细粒度权限模型（如需引入 `roles` / `permissions` / `user_roles` 表）
+
+---
+
+## 5. Quota management
+
+Phase 8B 支持当前周期 quota 管理（路径前缀 `/api/admin/quotas`）：
+
+- **list quotas** — `GET /api/admin/quotas?page=1&pageSize=20&keyword=&role=&status=`
+  - 筛选同用户管理：`keyword`（username/email）、`role`（USER/ADMIN）、`status`（ACTIVE/DISABLED/ALL）
+  - 包含已禁用用户，复用 8A 的 `selectAdminUsers` / `countAdminUsers`
+- **get user quota** — `GET /api/admin/quotas/users/{userId}`
+- **set total** — `PUT /api/admin/quotas/users/{userId}/total`（body: `{ "creditsTotal": 100 }`）
+- **grant credits** — `POST /api/admin/quotas/users/{userId}/grant`（body: `{ "credits": 20 }`）
+- **reset used** — `POST /api/admin/quotas/users/{userId}/reset-used`
+
+### 周期与默认值
+
+- 周期计算与 `AiUsageGuard` / `AiUsageQueryService` 一致：周一 00:00:00 到下周一 00:00:00（服务器默认时区）。
+- 默认每周 credits = 30（`DEFAULT_WEEKLY_CREDITS` 常量，与 `init.sql` 列默认值一致）。
+
+### 无 quota 行时的处理
+
+- **读操作**（list / get）：返回虚拟默认视图 `30/0/30`，`quotaRowExists=false`，**不创建** quota 行。
+- **写操作**（set total / grant / reset used）：**创建**当前周期 quota 行后再写入：
+  - set total：创建 `creditsTotal=request, creditsUsed=0`
+  - grant：创建 `creditsTotal=30+credits, creditsUsed=0`
+  - reset used：创建默认 `creditsTotal=30, creditsUsed=0`
+
+### 写操作规则
+
+- **set total**：`creditsTotal` 范围 0~100000；若 `creditsTotal < 当前 creditsUsed` 则拒绝；不修改 `creditsUsed`。
+- **grant**：`credits` 范围 1~100000；`creditsTotal += credits`，不修改 `creditsUsed`。
+- **reset used**：`creditsUsed = 0`，不修改 `creditsTotal`。
+
+### 安全
+
+- 所有返回的 `AdminQuotaDto` 不含 `password` / `apiKey` / `encryptedKey` / `maskedKey` / `baseUrl` / `model`。
+- 不修改 AI Provider 调用链、扣费逻辑、rate limit、usage records；本阶段仅管理端手动调整 `ai_usage_quota` 表。
+- 并发插入通过 `(user_id, period_start)` 唯一约束 + 失败重查兜底（与 `AiUsageGuard.getOrCreateCurrentQuota` 一致）。
+
