@@ -54,9 +54,9 @@ class AdminAuditLogServiceTest {
         when(request.getHeader("User-Agent")).thenReturn("Mozilla/5.0 (Test)");
         when(request.getRemoteAddr()).thenReturn("127.0.0.1");
 
-        // summary 包含 Bearer / sk- / password 三种敏感关键字（按规格只脱敏关键字本身，
-        // 不脱敏 = 后的值；调用方契约：重置密码场景只记 "reset password for userId=xxx"，不传密码值）
-        String dirty = "Bearer eyJabc123, sk-deepseek-ABC123, password reset note, normal text";
+        // Phase 8D-polish：summary 包含 Authorization: Bearer / token= / password= / apiKey= 四种 key=value 形式
+        // 必须断言敏感值（不是关键词）被完整移除
+        String dirty = "Authorization: Bearer eyJsecret123, token=tok_secret, password=abc123, apiKey=sk-test-abc123, normal text";
         service.recordSuccess(
                 new AuthUser(1L, "admin", "ADMIN"),
                 AdminOperationAction.USER_RESET_PASSWORD,
@@ -81,13 +81,98 @@ class AdminAuditLogServiceTest {
         assertEquals("203.0.113.10", saved.getIpAddress(),
                 "应取 X-Forwarded-For 第一个 IP");
         assertEquals("Mozilla/5.0 (Test)", saved.getUserAgent());
-        // 三个敏感关键字都应被替换为 ***
-        assertFalse(saved.getSummary().contains("Bearer"), "summary 不应含 Bearer");
-        assertFalse(saved.getSummary().contains("sk-deepseek-ABC123"), "summary 不应含 sk- key");
-        assertFalse(saved.getSummary().toLowerCase().contains("password"),
-                "summary 不应含 password 关键字（不区分大小写）");
+        // 敏感值必须被完整移除（不是只移除关键词）
+        assertFalse(saved.getSummary().contains("eyJsecret123"), "summary 不应含 Bearer token body");
+        assertFalse(saved.getSummary().contains("tok_secret"), "summary 不应含 token value");
+        assertFalse(saved.getSummary().contains("abc123"), "summary 不应含 password value");
+        assertFalse(saved.getSummary().contains("sk-test-abc123"), "summary 不应含 apiKey value");
         assertTrue(saved.getSummary().contains("***"), "summary 应含脱敏占位符 ***");
         assertTrue(saved.getSummary().contains("normal text"), "非敏感内容应保留");
+    }
+
+    // ─── 1b. sanitizeShouldMaskKeyValueSecrets ─────────────────────────────────
+
+    @Test
+    void sanitizeShouldMaskKeyValueSecrets() {
+        // 覆盖 password / newPassword / new_password / passwd / pwd /
+        // apiKey / api_key / access_token / refresh_token / jwt /
+        // encryptedKey / maskedKey 的 key=value / key:value 形式
+        String dirty = String.join(", ",
+                "password=abc123",
+                "password: abc123",
+                "newPassword=NewStrongPassword123!",
+                "new_password=NewStrongPassword123!",
+                "passwd=abc123",
+                "pwd=abc123",
+                "apiKey=sk-test-abc123",
+                "api_key: sk-test-abc123",
+                "access_token=access123",
+                "refresh_token=refresh123",
+                "jwt=eyJjwt",
+                "encryptedKey=ciphertext",
+                "maskedKey=sk-****abcd"
+        );
+
+        String sanitized = service.sanitizeSummary(dirty);
+
+        assertNotNull(sanitized);
+        // 所有敏感值必须消失
+        assertFalse(sanitized.contains("abc123"), "password/passwd/pwd 的值不应保留");
+        assertFalse(sanitized.contains("NewStrongPassword123!"), "newPassword/new_password 的值不应保留");
+        assertFalse(sanitized.contains("sk-test-abc123"), "apiKey/api_key 的值不应保留");
+        assertFalse(sanitized.contains("access123"), "access_token 的值不应保留");
+        assertFalse(sanitized.contains("refresh123"), "refresh_token 的值不应保留");
+        assertFalse(sanitized.contains("eyJjwt"), "jwt 的值不应保留");
+        assertFalse(sanitized.contains("ciphertext"), "encryptedKey 的值不应保留");
+        assertFalse(sanitized.contains("sk-****abcd"), "maskedKey 的值不应保留");
+        // 应保留 key 名 + 脱敏占位符
+        assertTrue(sanitized.contains("password=***"), "应保留 password=*** 形式");
+        assertTrue(sanitized.contains("apiKey=***"), "应保留 apiKey=*** 形式");
+        assertTrue(sanitized.contains("***"), "应含脱敏占位符 ***");
+    }
+
+    // ─── 1c. sanitizeShouldMaskAuthorizationAndBearer ──────────────────────────
+
+    @Test
+    void sanitizeShouldMaskAuthorizationAndBearer() {
+        String dirty = String.join(", ",
+                "Authorization: Bearer eyJabc123",
+                "authorization=Bearer eyJdef456",
+                "Bearer eyJghi789"
+        );
+
+        String sanitized = service.sanitizeSummary(dirty);
+
+        assertNotNull(sanitized);
+        // token body 必须全部消失
+        assertFalse(sanitized.contains("eyJabc123"), "Authorization: Bearer 的 token body 不应保留");
+        assertFalse(sanitized.contains("eyJdef456"), "authorization=Bearer 的 token body 不应保留");
+        assertFalse(sanitized.contains("eyJghi789"), "独立 Bearer 的 token body 不应保留");
+        // 应保留 Authorization / Bearer 关键字 + 脱敏占位符
+        assertTrue(sanitized.contains("Authorization: ***"), "应保留 Authorization: *** 形式");
+        assertTrue(sanitized.contains("authorization=***"), "应保留 authorization=*** 形式");
+        assertTrue(sanitized.contains("Bearer ***"), "应保留 Bearer *** 形式");
+    }
+
+    // ─── 1d. sanitizeShouldMaskSkKeys ──────────────────────────────────────────
+
+    @Test
+    void sanitizeShouldMaskSkKeys() {
+        String dirty = String.join(", ",
+                "sk-abc123",
+                "sk-deepseek-ABC123",
+                "sk_test_abc_123"
+        );
+
+        String sanitized = service.sanitizeSummary(dirty);
+
+        assertNotNull(sanitized);
+        // 原始 key 必须全部消失
+        assertFalse(sanitized.contains("sk-abc123"), "sk-abc123 不应保留");
+        assertFalse(sanitized.contains("sk-deepseek-ABC123"), "sk-deepseek-ABC123 不应保留");
+        assertFalse(sanitized.contains("sk_test_abc_123"), "sk_test_abc_123 不应保留");
+        // 应保留 sk-*** 脱敏形式
+        assertTrue(sanitized.contains("sk-***"), "应含 sk-*** 脱敏占位符");
     }
 
     // ─── 2. recordFailureShouldInsertFailedStatus ──────────────────────────────

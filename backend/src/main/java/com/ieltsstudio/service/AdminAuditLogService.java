@@ -54,13 +54,41 @@ public class AdminAuditLogService {
     /** 分页参数 clamp 上限 */
     private static final int MAX_PAGE_SIZE = 100;
 
+    // ─── 脱敏 Patterns（Phase 8D-polish：key=value / Bearer / sk-* 整段脱敏）────────
+
     /**
-     * 敏感关键字正则（不区分大小写）。
-     * 匹配到则替换为 {@code ***}。
+     * key=value / key:value 形式的敏感键值对。
+     * 匹配 password / newPassword / new_password / passwd / pwd /
+     * apiKey / api_key / key / access_token / refresh_token / token / jwt /
+     * encryptedKey / encrypted_key / maskedKey / masked_key。
+     * 替换为 {@code keyName***=***}（保留 key 名 + 分隔符，掩盖 value）。
      */
-    private static final Pattern SENSITIVE_PATTERN = Pattern.compile(
-            "(?i)(password|newpassword|apikey|api_key|authorization|bearer|sk-[a-z0-9_-]+|token|jwt|encrypted[ _]?key|masked[ _]?key)",
-            Pattern.CASE_INSENSITIVE);
+    private static final Pattern KEY_VALUE_SECRET_PATTERN = Pattern.compile(
+            "(?i)\\b(password|newPassword|new_password|passwd|pwd|apiKey|api_key|" +
+            "access_token|refresh_token|token|jwt|" +
+            "encryptedKey|encrypted_key|maskedKey|masked_key|key)" +
+            "\\b(\\s*[=:]\\s*)[^,;\\s]+");
+
+    /**
+     * Authorization: xxx / Authorization=xxx（含 Bearer 场景）。
+     * 替换为 {@code Authorization***=***}（保留 key 名 + 分隔符，掩盖 Bearer + token body）。
+     */
+    private static final Pattern AUTHORIZATION_PATTERN = Pattern.compile(
+            "(?i)(\\bAuthorization\\b\\s*[=:]\\s*)(Bearer\\s+)?[^,;\\s]+");
+
+    /**
+     * Bearer xxx（独立出现，不在 Authorization 后）。
+     * 替换为 {@code Bearer ***}（保留 Bearer 关键字，掩盖 token body）。
+     */
+    private static final Pattern BEARER_PATTERN = Pattern.compile(
+            "(?i)(\\bBearer\\b)\\s+[^,;\\s]+");
+
+    /**
+     * sk-xxx / sk_xxx provider key（DeepSeek/OpenAI 风格）。
+     * 整段替换为 {@code sk-***}。
+     */
+    private static final Pattern SK_KEY_PATTERN = Pattern.compile(
+            "(?i)\\bsk[-_][A-Za-z0-9._-]+");
 
     private final AdminOperationLogMapper auditLogMapper;
 
@@ -187,22 +215,39 @@ public class AdminAuditLogService {
     // ─── 内部 helper ────────────────────────────────────────────────────────────
 
     /**
-     * summary 脱敏 + 截断。
+     * summary 脱敏 + 截断（Phase 8D-polish 增强）。
      *
-     * <p>规则：
+     * <p>规则（按顺序依次替换，保留 key 名与分隔符，掩盖敏感值）：
      * <ol>
-     *   <li>把 {@code password} / {@code apiKey} / {@code Authorization} / {@code Bearer} /
-     *       {@code sk-xxx} / {@code token} / {@code jwt} / {@code encrypted key} /
-     *       {@code masked key} 等敏感关键字（不区分大小写）替换为 {@code ***}。</li>
+     *   <li>{@code Authorization: Bearer xxx} / {@code Authorization=xxx} → {@code Authorization: ***}。</li>
+     *   <li>{@code keyName=value} / {@code keyName: value} 形式（password / newPassword /
+     *       new_password / passwd / pwd / apiKey / api_key / key / access_token /
+     *       refresh_token / token / jwt / encryptedKey / encrypted_key / maskedKey /
+     *       masked_key）→ {@code keyName=***}。</li>
+     *   <li>独立 {@code Bearer xxx} → {@code Bearer ***}。</li>
+     *   <li>{@code sk-xxx} / {@code sk_xxx} provider key → {@code sk-***}。</li>
      *   <li>截断到 {@value #SUMMARY_MAX_LENGTH} 字符。</li>
      *   <li>null 返回 null。</li>
      * </ol>
+     *
+     * <p>注意：只脱敏 {@code key=value} / {@code key:value} 形式中的 value，
+     * 不影响普通文本里出现的 key 名（如 "reset password for userId=42" 中的 password 不带 value，
+     * 不会被脱敏）。</p>
      */
     String sanitizeSummary(String summary) {
         if (summary == null) {
             return null;
         }
-        String sanitized = SENSITIVE_PATTERN.matcher(summary).replaceAll("***");
+        String sanitized = summary;
+        // 顺序：先处理 Authorization（最具体），再 key=value，再独立 Bearer，最后 sk-* key
+        sanitized = AUTHORIZATION_PATTERN.matcher(sanitized)
+                .replaceAll(mr -> mr.group(1) + "***");
+        sanitized = KEY_VALUE_SECRET_PATTERN.matcher(sanitized)
+                .replaceAll(mr -> mr.group(1) + mr.group(2) + "***");
+        sanitized = BEARER_PATTERN.matcher(sanitized)
+                .replaceAll(mr -> mr.group(1) + " ***");
+        sanitized = SK_KEY_PATTERN.matcher(sanitized)
+                .replaceAll(mr -> "sk-***");
         return truncate(sanitized, SUMMARY_MAX_LENGTH);
     }
 

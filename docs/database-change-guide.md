@@ -257,7 +257,14 @@ CREATE TABLE IF NOT EXISTS admin_operation_logs (
 
 ### summary 脱敏规则
 
-`AdminAuditLogService.sanitizeSummary(summary)` 在写入前对 `password` / `newpassword` / `apikey` / `api_key` / `authorization` / `bearer` / `sk-xxx` / `token` / `jwt` / `encrypted key` / `masked key` 等关键字（不区分大小写）替换为 `***`，并截断到 1000 字符。重置密码场景 summary 只记录 `reset password for userId=xxx`，绝不记录密码内容。
+`AdminAuditLogService.sanitizeSummary(summary)` 在写入前对敏感键值对和 token 做脱敏（不区分大小写），保留 key 名与分隔符，掩盖敏感值，并截断到 1000 字符。覆盖范围：
+
+- `key=value` / `key:value` 形式：`password` / `newPassword` / `new_password` / `passwd` / `pwd` / `apiKey` / `api_key` / `key` / `access_token` / `refresh_token` / `token` / `jwt` / `encryptedKey` / `encrypted_key` / `maskedKey` / `masked_key`
+- `Authorization: Bearer xxx` / `Authorization=xxx` → `Authorization: ***`
+- 独立 `Bearer xxx` → `Bearer ***`
+- `sk-xxx` / `sk_xxx` provider key → `sk-***`
+
+重置密码场景 summary 只记录 `reset password for userId=xxx`，绝不记录密码内容。
 
 ### 范围
 
